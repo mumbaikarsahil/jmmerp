@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
@@ -35,11 +36,19 @@ type CustomIngredient = {
   base_unit: string;      
 };
 
+type AppliedService = {
+  item_id: number;
+  item_name: string;
+  rate: number;
+};
+
 export interface OrderCartItem extends Item {
   cartId: string;
   cartQuantity: number;
   customIngredients: CustomIngredient[];
   sourceTemplateId?: string | null;
+  recipeMultiplier?: number;
+  appliedServices?: AppliedService[];
 }
 
 type Customer = {
@@ -75,6 +84,29 @@ const isWeightedItem = (item: Item) => {
 };
 
 const getSafeItemName = (item: Item) => item.item_name || "Unnamed Item";
+
+const normalizeUnitStr = (str: string) => String(str || "").toLowerCase().trim();
+
+// BULLETPROOF NORMALIZATION: Prevents the 10 Lakh bill bug forever.
+const getNormalizedQtyForCost = (qty: number, displayUnit: string, dbBaseUnit: string) => {
+  const u = normalizeUnitStr(displayUnit);
+  const bu = normalizeUnitStr(dbBaseUnit);
+  
+  if (u === 'piece' || u === 'nug' || u === 'pcs' || bu === 'piece') return qty;
+
+  if ((u === 'g' || u === 'gm' || u === 'gram' || u === 'grams') && (bu === 'kg' || bu === 'kilogram' || bu === 'kilograms')) {
+    return qty / 1000;
+  }
+  
+  if ((u === 'ml') && (bu === 'l' || bu === 'ltr' || bu === 'liter' || bu === 'liters')) {
+    return qty / 1000;
+  }
+  
+  // Safe Fallback: If unit matching failed but number is > 10 and DB expects kg, it's definitely grams.
+  if (qty >= 10 && bu.includes('kg')) return qty / 1000;
+
+  return qty;
+};
 
 const StockBadge = ({ item }: { item: Item }) => {
   const quantity = Number((item as any).quantity || 0);
@@ -210,9 +242,9 @@ export default function Billing() {
   const [masalaMultiplier, setMasalaMultiplier] = useState<number>(1);
   const [customPrice, setCustomPrice] = useState<number | "">("");
   
-  // LABOUR CHARGE STATE
-  const [labourRate, setLabourRate] = useState<number>(80); 
-  const [labourItemId, setLabourItemId] = useState<number | null>(null);
+  // DYNAMIC SERVICES STATE
+  const [availableServices, setAvailableServices] = useState<Item[]>([]);
+  const [activeServices, setActiveServices] = useState<AppliedService[]>([]);
 
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [completedOrder, setCompletedOrder] = useState<any>(null);
@@ -239,32 +271,46 @@ export default function Billing() {
     }
   }, [balanceDue, mobileCheckoutOpen, paymentDialogOpen]);
 
-  // --- SMART PRICING ENGINE FOR MASALA ---
+  // --- SMART PRICING ENGINE ---
   const totalMixWeightKg = useMemo(() => {
     return tempCustomIngredients.reduce((sum, ing) => {
-      let normalizedQty = ing.qty || 0;
-      if (ing.unit === 'g') normalizedQty = ing.qty / 1000;
+      const u = normalizeUnitStr(ing.unit);
+      if (u === 'piece' || u === 'nug' || u === 'pcs') return sum;
+      
+      let normalizedQty = Number(ing.qty) || 0;
+      if (u === 'g' || u === 'gm' || u === 'gram') normalizedQty = normalizedQty / 1000;
       return sum + normalizedQty;
     }, 0);
   }, [tempCustomIngredients]);
 
   const materialCost = useMemo(() => {
     return tempCustomIngredients.reduce((sum, ing) => {
-      let normalizedQty = ing.qty || 0;
-      if (ing.unit === 'g' && ing.base_unit === 'kg') normalizedQty = ing.qty / 1000;
-      else if (ing.unit === 'kg' && ing.base_unit === 'g') normalizedQty = ing.qty * 1000;
-      return sum + (normalizedQty * (ing.price_per_unit || 0));
+      const unit = String(ing.unit || "g").toLowerCase().trim();
+      const baseUnit = String(ing.base_unit || "kg").toLowerCase().trim();
+      let qtyForPricing = Number(ing.qty) || 0;
+
+      if (unit === 'piece' || unit === 'nug' || unit === 'pcs' || baseUnit === 'piece' || baseUnit === 'nug') {
+          return sum + (qtyForPricing * Number(ing.price_per_unit || 0));
+      }
+
+      if (unit === 'g' || unit === 'gm' || unit === 'gram' || qtyForPricing >= 20) {
+          qtyForPricing = qtyForPricing / 1000;
+      }
+
+      return sum + (qtyForPricing * Number(ing.price_per_unit || 0));
     }, 0);
   }, [tempCustomIngredients]);
 
-  // LABOUR CALCULATION FIX: Based purely on the multiplier value
-  const calculatedLabourCharge = masalaMultiplier * labourRate;
+  // DYNAMIC LABOUR CALCULATION
+  const calculatedServicesCharge = useMemo(() => {
+    return activeServices.reduce((sum, svc) => sum + (masalaMultiplier * svc.rate), 0);
+  }, [activeServices, masalaMultiplier]);
 
   useEffect(() => {
     if (showCustomMasala) {
-      setCustomPrice(Math.round(materialCost + calculatedLabourCharge));
+      setCustomPrice(Math.round(materialCost + calculatedServicesCharge));
     }
-  }, [materialCost, calculatedLabourCharge, showCustomMasala]);
+  }, [materialCost, calculatedServicesCharge, showCustomMasala]);
 
 
   useEffect(() => {
@@ -297,36 +343,15 @@ export default function Billing() {
         fetchAllTenantData(p.tenant_id), 
         fetchTemplates(p.tenant_id), 
         fetchNextOrderNumber(p.tenant_id),
-        fetchLabourRate(p.tenant_id)
+        fetchServices(p.tenant_id)
       ]);
     };
     initialize();
   }, []);
 
-  const fetchLabourRate = async (tenantId: string) => {
-    let { data } = await (supabase as any).from("items")
-      .select("id, selling_price")
-      .eq("tenant_id", tenantId)
-      .eq("item_name", "Labour Charge (मजूरी)")
-      .maybeSingle();
-
-    if (!data) {
-      const { data: newItem } = await (supabase as any).from("items").insert({
-        tenant_id: tenantId,
-        item_code: "LABOUR",
-        item_name: "Labour Charge (मजूरी)",
-        item_type: "SERVICE",
-        base_unit: "kg",
-        selling_price: 80, 
-        track_inventory: false,
-        is_sellable: false
-      }).select("id, selling_price").single();
-      data = newItem;
-    }
-    if (data) {
-      setLabourItemId(data.id);
-      setLabourRate(Number(data.selling_price || 0));
-    }
+  const fetchServices = async (tenantId: string) => {
+    const { data } = await (supabase as any).from("items").select("*").eq("tenant_id", tenantId).eq("item_type", "SERVICE").order("item_name", { ascending: true });
+    if (data) setAvailableServices(data);
   };
 
   const fetchAllTenantData = async (tenantId: string) => {
@@ -454,6 +479,22 @@ export default function Billing() {
         setTempCustomIngredients([]);
         setCustomPrice(""); 
         setMasalaMultiplier(1);
+        
+        // Auto apply primary labour if exists
+       // Auto apply default services (Labour and Oil)
+       const defaultServices = availableServices
+       .filter(s => 
+         s.item_name.includes("Labour") || s.item_name.includes("मजूरी") || 
+         s.item_name.includes("Oil") || s.item_name.includes("तेल")
+       )
+       .map(svc => ({
+         item_id: svc.id, 
+         item_name: svc.item_name, 
+         rate: Number(svc.selling_price || 0)
+       }));
+
+     setActiveServices(defaultServices);
+
         setShowCustomMasala(true);
       }
     } catch(e) {} finally { setIsProcessing(false); }
@@ -464,22 +505,25 @@ export default function Billing() {
     setTempCustomIngredients([...item.customIngredients]);
     setCustomPrice(Number(item.selling_price || 0));
     setSelectedTemplateId(item.sourceTemplateId || "");
-    // Default to 1, as custom adjustments don't easily reverse engineer multiplier
-    setMasalaMultiplier(1);
+    setMasalaMultiplier(item.recipeMultiplier || 1);
+    setActiveServices(item.appliedServices || []);
     setShowCustomMasala(true);
   };
 
   const applyTemplate = (templateId: string, multiplier: number = masalaMultiplier) => {
     const template = masalaTemplates.find((item) => item.id === templateId);
     if (!template) return;
-    const ingredients: CustomIngredient[] = template.template_ingredients.map((ing) => ({
-      item_id: ing.item_id, 
-      item_name: ing.items?.item_name || "Unknown item", 
-      qty: Number(ing.base_qty || 0) * multiplier, 
-      unit: ing.unit || "g",
-      price_per_unit: Number(ing.items?.selling_price || 0),
-      base_unit: String(ing.items?.base_unit || "kg")
-    }));
+    const ingredients: CustomIngredient[] = template.template_ingredients.map((ing) => {
+      const itemObj = Array.isArray(ing.items) ? ing.items[0] : ing.items;
+      return {
+        item_id: ing.item_id, 
+        item_name: itemObj?.item_name || "Unknown item", 
+        qty: Number(ing.base_qty || 0) * multiplier, 
+        unit: normalizeUnitStr(ing.unit || "g"),
+        price_per_unit: Number(itemObj?.selling_price || 0),
+        base_unit: normalizeUnitStr(itemObj?.base_unit || "kg")
+      };
+    });
     setSelectedTemplateId(templateId);
     setTempCustomIngredients(ingredients);
   };
@@ -496,13 +540,17 @@ export default function Billing() {
   const addCustomIngredient = (itemId: number) => {
     const raw = rawMaterials.find((item) => item.id === itemId);
     if (!raw) return;
+    
+    const baseU = normalizeUnitStr((raw as any).base_unit || "kg");
+    const defaultUnit = baseU.includes('kg') ? 'g' : baseU;
+
     setTempCustomIngredients((prev) => [...prev, { 
       item_id: raw.id, 
       item_name: getSafeItemName(raw), 
       qty: 0, 
-      unit: String((raw as any).base_unit || "kg"),
+      unit: defaultUnit,
       price_per_unit: Number((raw as any).selling_price || 0),
-      base_unit: String((raw as any).base_unit || "kg")
+      base_unit: baseU
     }]);
   };
 
@@ -515,16 +563,18 @@ export default function Billing() {
   const saveCustomization = async () => {
     if (!customPrice || Number(customPrice) <= 0) return toast({ title: "Enter a selling price", variant: "destructive" });
     
-    if (labourItemId && currentTenantId) {
-       (supabase as any).from("items").update({ selling_price: labourRate }).eq("id", labourItemId).then();
+    if (currentTenantId) {
+       for (const svc of activeServices) {
+          (supabase as any).from("items").update({ selling_price: svc.rate }).eq("id", svc.item_id).then();
+       }
     }
 
     if (customizingCartId) {
-      setCart((prev) => prev.map((item) => item.cartId === customizingCartId ? { ...item, customIngredients: [...tempCustomIngredients], selling_price: Number(customPrice), sourceTemplateId: selectedTemplateId || null } : item));
+      setCart((prev) => prev.map((item) => item.cartId === customizingCartId ? { ...item, customIngredients: [...tempCustomIngredients], selling_price: Number(customPrice), sourceTemplateId: selectedTemplateId || null, recipeMultiplier: masalaMultiplier, appliedServices: activeServices } : item));
     } else {
       const customItem = allItems.find((item) => getSafeItemName(item) === "Yearly Masala" || getSafeItemName(item) === "Custom Masala Blend");
       if (!customItem) return toast({ title: "Item missing", description: "Create 'Yearly Masala' in DB.", variant: "destructive" });
-      setCart((prev) => [...prev, { ...customItem, cartId: crypto.randomUUID(), cartQuantity: 1, selling_price: Number(customPrice), customIngredients: [...tempCustomIngredients], sourceTemplateId: selectedTemplateId || null }]);
+      setCart((prev) => [...prev, { ...customItem, cartId: crypto.randomUUID(), cartQuantity: 1, selling_price: Number(customPrice), customIngredients: [...tempCustomIngredients], sourceTemplateId: selectedTemplateId || null, recipeMultiplier: masalaMultiplier, appliedServices: activeServices }]);
     }
     setShowCustomMasala(false);
   };
@@ -580,6 +630,8 @@ export default function Billing() {
       if (orderError) throw orderError;
 
       let totalMixWeight = 0;
+      const aggregatedServices = new Map<string, number>();
+
       for (const cartItem of cart) {
         const { data: orderItem, error: orderItemError } = await (supabase as any).from("order_items").insert({
           tenant_id: currentTenantId, order_id: order.id, item_id: cartItem.id, quantity: cartItem.cartQuantity,
@@ -589,9 +641,19 @@ export default function Billing() {
         if (orderItemError) throw orderItemError;
 
         if (cartItem.customIngredients && cartItem.customIngredients.length > 0) {
-          // Track weight for receipt
-          const weight = cartItem.customIngredients.reduce((s, i) => s + (i.unit === 'g' ? i.qty / 1000 : i.qty), 0);
+          const weight = cartItem.customIngredients.reduce((s, i) => {
+             const u = normalizeUnitStr(i.unit);
+             if (u === 'piece' || u === 'nug' || u === 'pcs') return s;
+             return s + (u === 'g' || u === 'gm' ? i.qty / 1000 : i.qty);
+          }, 0);
           totalMixWeight += weight;
+
+          if (cartItem.appliedServices && cartItem.appliedServices.length > 0) {
+            for (const svc of cartItem.appliedServices) {
+              const charge = (cartItem.recipeMultiplier || 1) * svc.rate;
+              aggregatedServices.set(svc.item_name, (aggregatedServices.get(svc.item_name) || 0) + charge);
+            }
+          }
 
           const overrides = cartItem.customIngredients.filter((ing) => ing.qty > 0).map((ing) => ({
             tenant_id: currentTenantId, order_item_id: orderItem.id, item_id: ing.item_id, custom_quantity: ing.qty, unit: ing.unit,
@@ -608,6 +670,8 @@ export default function Billing() {
         await (supabase as any).from("payments").insert(records);
       }
 
+      const receiptServicesArray = Array.from(aggregatedServices, ([name, total]) => ({ name, total }));
+
       setCompletedOrder({ 
         ...order, 
         final_amount: finalTotal, 
@@ -616,7 +680,7 @@ export default function Billing() {
         customerName: customerName || customer?.full_name || "",
         customerPhone: customerPhone || customer?.phone_number || "",
         totalMixWeightKg: totalMixWeight,
-        labourRate: labourRate,
+        receiptServices: receiptServicesArray,
         advancePaid: totalPaid,
         balanceDue: balanceDue,
         discountAmount, 
@@ -665,76 +729,6 @@ export default function Billing() {
     const cleanPhone = phone.replace(/\D/g, '');
     window.open(`https://wa.me/91${cleanPhone}?text=${message}`, "_blank");
   };
-
-  // RAW JSX for Payment Engine to prevent React remounting & losing input focus
-  const renderPaymentEngine = () => (
-    <div className="space-y-4">
-      <div className="space-y-1.5">
-        <Label className="text-[11px] font-semibold text-zinc-500 uppercase ml-1">Order Details</Label>
-        <div className="flex gap-2">
-          <div className="relative flex-1">
-            <Receipt className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-            <Input value={orderNumber} onChange={e => setOrderNumber(e.target.value)} className="h-11 pl-9 rounded-xl border-zinc-200 shadow-sm font-medium text-sm bg-white" placeholder="Order No."/>
-          </div>
-          <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className="h-11 w-[130px] rounded-xl border-zinc-200 shadow-sm text-xs font-medium bg-white" />
-        </div>
-      </div>
-
-      <div className="space-y-1.5">
-        <Label className="text-[11px] font-semibold text-zinc-500 uppercase ml-1">Customer CRM</Label>
-        <div className="relative">
-          <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-          <Input value={customerPhone} onChange={e => handlePhoneChange(e.target.value)} placeholder="Phone Number (e.g., 9876543210)" className="h-11 pl-9 rounded-xl border-zinc-200 shadow-sm font-medium text-sm bg-white" />
-        </div>
-        {customerPhone.length >= 10 && (
-          <div className="relative mt-2 animate-in fade-in slide-in-from-top-2">
-            <UserRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-            <Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Customer Name" className="h-11 pl-9 rounded-xl border-zinc-200 shadow-sm font-medium text-sm bg-white" />
-          </div>
-        )}
-      </div>
-
-      <div className="space-y-2 bg-zinc-50 border border-zinc-200/80 p-3 rounded-xl shadow-sm">
-        <div className="flex justify-between items-center mb-1">
-           <Label className="text-[11px] font-semibold text-zinc-500 uppercase ml-1">Split Payment Record</Label>
-           <span className="text-[11px] font-bold text-zinc-500 bg-white border border-zinc-200 px-2 py-0.5 rounded shadow-sm">Pending: {formatCurrency(balanceDue)}</span>
-        </div>
-        <div className="flex gap-2">
-          <select value={paymentMethodInput} onChange={(e) => setPaymentMethodInput(e.target.value as PaymentMethod)} className="h-11 w-[90px] rounded-xl border border-zinc-300 bg-white px-2 text-xs font-bold outline-none focus:ring-1 focus:ring-zinc-900 shadow-sm">
-            <option value="CASH">CASH</option>
-            <option value="UPI">UPI</option>
-            <option value="CARD">CARD</option>
-          </select>
-          <Input type="number" value={paymentAmountInput} onChange={(e) => setPaymentAmountInput(e.target.value)} placeholder="Amount" className="h-11 flex-1 rounded-xl border-zinc-300 font-bold text-zinc-900 shadow-sm bg-white" />
-          <Button onClick={addPayment} className="h-11 px-4 rounded-xl bg-zinc-900 text-white font-semibold shadow-sm hover:bg-zinc-800">
-             {Number(paymentAmountInput) > 0 && Number(paymentAmountInput) < balanceDue ? "Split" : "Add"}
-          </Button>
-        </div>
-        
-        {balanceDue > 0 && (
-          <div className="flex gap-2 overflow-x-auto scrollbar-none pt-1">
-            <button onClick={() => setPaymentAmountInput(String(balanceDue))} className="px-3 py-1.5 bg-white border border-zinc-200 rounded-lg text-[11px] font-bold text-zinc-700 whitespace-nowrap active:scale-95 transition-all shadow-sm">Full Pay</button>
-            <button onClick={() => setPaymentAmountInput(String(Math.floor(balanceDue / 2)))} className="px-3 py-1.5 bg-white border border-zinc-200 rounded-lg text-[11px] font-bold text-zinc-700 whitespace-nowrap active:scale-95 transition-all shadow-sm">Split 50%</button>
-            <button onClick={() => { setPayments([]); setPaymentAmountInput(""); }} className="px-3 py-1.5 bg-rose-50 border border-rose-200 rounded-lg text-[11px] font-bold text-rose-700 whitespace-nowrap active:scale-95 transition-all shadow-sm">Zero Advance (Udhaar)</button>
-          </div>
-        )}
-
-        {payments.length > 0 && (
-          <div className="pt-2 mt-2 border-t border-zinc-200/80 space-y-2">
-            {payments.map(payment => (
-              <div key={payment.id} className="flex justify-between items-center text-sm bg-white p-2 rounded-lg border border-zinc-200 shadow-sm">
-                <span className="font-bold text-zinc-700 text-xs">{payment.method}</span>
-                <div className="flex items-center gap-3">
-                  <span className="font-bold text-emerald-600">{formatCurrency(payment.amount)}</span>
-                  <button onClick={() => removePayment(payment.id)} className="text-zinc-400 hover:text-rose-500 bg-zinc-50 p-1 rounded-md"><X className="h-3.5 w-3.5" /></button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
 
   const renderCartContent = (compact = false) => (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -826,7 +820,6 @@ export default function Billing() {
     <AppLayout>
       <div className="flex h-[calc(100dvh-4rem)] min-h-0 flex-col bg-zinc-50 font-sans relative">
         
-        {/* HEADER & COMMAND BAR */}
         <header className="shrink-0 border-b border-zinc-200 bg-white shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
           <div className="flex flex-col sm:flex-row gap-3 px-3 sm:px-5 py-3">
             <div className="flex items-center gap-3 w-full">
@@ -855,7 +848,6 @@ export default function Billing() {
           </div>
 
           <div className="flex gap-3 overflow-x-auto border-t border-zinc-100 px-3 py-3 scrollbar-none sm:px-5 bg-zinc-50/50 items-center">
-            {/* YEARLY MASALA BUTTON */}
             <button onClick={startCustomMasalaOrder} className="flex shrink-0 items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 h-10 text-sm font-semibold text-emerald-800 hover:bg-emerald-100 transition-colors shadow-sm">
               <FlaskConical className="h-4 w-4" /> Yearly Masala
             </button>
@@ -871,11 +863,9 @@ export default function Billing() {
           </div>
         </header>
 
-        {/* MAIN LAYOUT */}
         <div className="flex min-h-0 flex-1">
           <main className="min-w-0 flex-1 overflow-y-auto p-3 sm:p-5">
             
-            {/* COMPACT NATIVE QUICK QTY CONTROLS */}
             <div className="mb-4 lg:hidden">
               <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-1.5 block ml-1">Quick Add Quantity</span>
               <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
@@ -885,7 +875,6 @@ export default function Billing() {
                   </button>
                 ))}
                 
-                {/* NATIVE DIAL SELECT FOR 1-100 */}
                 <div className="shrink-0 relative">
                   <select 
                     value={quickQuantity} 
@@ -955,7 +944,6 @@ export default function Billing() {
           </aside>
         </div>
 
-        {/* --- 1. SWIGGY-STYLE FLOATING BOTTOM PILL (MOBILE) --- */}
         {cart.length > 0 && !mobileCheckoutOpen && (
           <div className="fixed bottom-[80px] left-4 right-4 z-40 lg:hidden animate-in fade-in slide-in-from-bottom-4">
             <SwipeToCheckout cartCount={cart.length} total={finalTotal} onCheckout={openMobileCheckout} />
@@ -964,7 +952,7 @@ export default function Billing() {
 
       </div>
 
-      {/* --- 2. STEP 2 FULL-SCREEN MOBILE CHECKOUT (SLIDE FROM RIGHT) --- */}
+      {/* --- MOBILE CHECKOUT --- */}
       {mobileCheckoutOpen && (
         <div className="fixed inset-0 z-[100] bg-zinc-50 flex flex-col animate-in slide-in-from-right-full duration-300 lg:hidden">
           
@@ -1000,7 +988,72 @@ export default function Billing() {
                </div>
             </div>
 
-            {renderPaymentEngine()}
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label className="text-[11px] font-semibold text-zinc-500 uppercase ml-1">Order Details</Label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Receipt className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                    <Input value={orderNumber} onChange={e => setOrderNumber(e.target.value)} className="h-11 pl-9 rounded-xl border-zinc-200 shadow-sm font-medium text-sm bg-white" placeholder="Order No."/>
+                  </div>
+                  <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className="h-11 w-[130px] rounded-xl border-zinc-200 shadow-sm text-xs font-medium bg-white" />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-[11px] font-semibold text-zinc-500 uppercase ml-1">Customer CRM</Label>
+                <div className="relative">
+                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                  <Input value={customerPhone} onChange={e => handlePhoneChange(e.target.value)} placeholder="Phone Number (e.g., 9876543210)" className="h-11 pl-9 rounded-xl border-zinc-200 shadow-sm font-medium text-sm bg-white" />
+                </div>
+                {customerPhone.length >= 10 && (
+                  <div className="relative mt-2 animate-in fade-in slide-in-from-top-2">
+                    <UserRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                    <Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Customer Name" className="h-11 pl-9 rounded-xl border-zinc-200 shadow-sm font-medium text-sm bg-white" />
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2 bg-zinc-50 border border-zinc-200/80 p-3 rounded-xl shadow-sm">
+                <div className="flex justify-between items-center mb-1">
+                   <Label className="text-[11px] font-semibold text-zinc-500 uppercase ml-1">Split Payment Record</Label>
+                   <span className="text-[11px] font-bold text-zinc-500 bg-white border border-zinc-200 px-2 py-0.5 rounded shadow-sm">Pending: {formatCurrency(balanceDue)}</span>
+                </div>
+                <div className="flex gap-2">
+                  <select value={paymentMethodInput} onChange={(e) => setPaymentMethodInput(e.target.value as PaymentMethod)} className="h-11 w-[90px] rounded-xl border border-zinc-300 bg-white px-2 text-xs font-bold outline-none focus:ring-1 focus:ring-zinc-900 shadow-sm">
+                    <option value="CASH">CASH</option>
+                    <option value="UPI">UPI</option>
+                    <option value="CARD">CARD</option>
+                  </select>
+                  <Input type="number" value={paymentAmountInput} onChange={(e) => setPaymentAmountInput(e.target.value)} placeholder="Amount" className="h-11 flex-1 rounded-xl border-zinc-300 font-bold text-zinc-900 shadow-sm bg-white" />
+                  <Button onClick={addPayment} className="h-11 px-4 rounded-xl bg-zinc-900 text-white font-semibold shadow-sm hover:bg-zinc-800">
+                     {Number(paymentAmountInput) > 0 && Number(paymentAmountInput) < balanceDue ? "Split" : "Add"}
+                  </Button>
+                </div>
+                
+                {balanceDue > 0 && (
+                  <div className="flex gap-2 overflow-x-auto scrollbar-none pt-1">
+                    <button onClick={() => setPaymentAmountInput(String(balanceDue))} className="px-3 py-1.5 bg-white border border-zinc-200 rounded-lg text-[11px] font-bold text-zinc-700 whitespace-nowrap active:scale-95 transition-all shadow-sm">Full Pay</button>
+                    <button onClick={() => setPaymentAmountInput(String(Math.floor(balanceDue / 2)))} className="px-3 py-1.5 bg-white border border-zinc-200 rounded-lg text-[11px] font-bold text-zinc-700 whitespace-nowrap active:scale-95 transition-all shadow-sm">Split 50%</button>
+                    <button onClick={() => { setPayments([]); setPaymentAmountInput(""); }} className="px-3 py-1.5 bg-rose-50 border border-rose-200 rounded-lg text-[11px] font-bold text-rose-700 whitespace-nowrap active:scale-95 transition-all shadow-sm">Zero Advance (Udhaar)</button>
+                  </div>
+                )}
+
+                {payments.length > 0 && (
+                  <div className="pt-2 mt-2 border-t border-zinc-200/80 space-y-2">
+                    {payments.map(payment => (
+                      <div key={payment.id} className="flex justify-between items-center text-sm bg-white p-2 rounded-lg border border-zinc-200 shadow-sm">
+                        <span className="font-bold text-zinc-700 text-xs">{payment.method}</span>
+                        <div className="flex items-center gap-3">
+                          <span className="font-bold text-emerald-600">{formatCurrency(payment.amount)}</span>
+                          <button onClick={() => removePayment(payment.id)} className="text-zinc-400 hover:text-rose-500 bg-zinc-50 p-1 rounded-md"><X className="h-3.5 w-3.5" /></button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
 
           </div>
           
@@ -1029,7 +1082,72 @@ export default function Billing() {
               {totalPaid > 0 && <p className="text-xs font-medium text-emerald-600 mt-2">Paid: {formatCurrency(totalPaid)}</p>}
             </div>
 
-            {renderPaymentEngine()}
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label className="text-[11px] font-semibold text-zinc-500 uppercase ml-1">Order Details</Label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Receipt className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                    <Input value={orderNumber} onChange={e => setOrderNumber(e.target.value)} className="h-11 pl-9 rounded-xl border-zinc-200 shadow-sm font-medium text-sm bg-white" placeholder="Order No."/>
+                  </div>
+                  <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className="h-11 w-[130px] rounded-xl border-zinc-200 shadow-sm text-xs font-medium bg-white" />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-[11px] font-semibold text-zinc-500 uppercase ml-1">Customer CRM</Label>
+                <div className="relative">
+                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                  <Input value={customerPhone} onChange={e => handlePhoneChange(e.target.value)} placeholder="Phone Number (e.g., 9876543210)" className="h-11 pl-9 rounded-xl border-zinc-200 shadow-sm font-medium text-sm bg-white" />
+                </div>
+                {customerPhone.length >= 10 && (
+                  <div className="relative mt-2 animate-in fade-in slide-in-from-top-2">
+                    <UserRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                    <Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Customer Name" className="h-11 pl-9 rounded-xl border-zinc-200 shadow-sm font-medium text-sm bg-white" />
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2 bg-zinc-50 border border-zinc-200/80 p-3 rounded-xl shadow-sm">
+                <div className="flex justify-between items-center mb-1">
+                   <Label className="text-[11px] font-semibold text-zinc-500 uppercase ml-1">Split Payment Record</Label>
+                   <span className="text-[11px] font-bold text-zinc-500 bg-white border border-zinc-200 px-2 py-0.5 rounded shadow-sm">Pending: {formatCurrency(balanceDue)}</span>
+                </div>
+                <div className="flex gap-2">
+                  <select value={paymentMethodInput} onChange={(e) => setPaymentMethodInput(e.target.value as PaymentMethod)} className="h-11 w-[90px] rounded-xl border border-zinc-300 bg-white px-2 text-xs font-bold outline-none focus:ring-1 focus:ring-zinc-900 shadow-sm">
+                    <option value="CASH">CASH</option>
+                    <option value="UPI">UPI</option>
+                    <option value="CARD">CARD</option>
+                  </select>
+                  <Input type="number" value={paymentAmountInput} onChange={(e) => setPaymentAmountInput(e.target.value)} placeholder="Amount" className="h-11 flex-1 rounded-xl border-zinc-300 font-bold text-zinc-900 shadow-sm bg-white" />
+                  <Button onClick={addPayment} className="h-11 px-4 rounded-xl bg-zinc-900 text-white font-semibold shadow-sm hover:bg-zinc-800">
+                     {Number(paymentAmountInput) > 0 && Number(paymentAmountInput) < balanceDue ? "Split" : "Add"}
+                  </Button>
+                </div>
+                
+                {balanceDue > 0 && (
+                  <div className="flex gap-2 overflow-x-auto scrollbar-none pt-1">
+                    <button onClick={() => setPaymentAmountInput(String(balanceDue))} className="px-3 py-1.5 bg-white border border-zinc-200 rounded-lg text-[11px] font-bold text-zinc-700 whitespace-nowrap active:scale-95 transition-all shadow-sm">Full Pay</button>
+                    <button onClick={() => setPaymentAmountInput(String(Math.floor(balanceDue / 2)))} className="px-3 py-1.5 bg-white border border-zinc-200 rounded-lg text-[11px] font-bold text-zinc-700 whitespace-nowrap active:scale-95 transition-all shadow-sm">Split 50%</button>
+                    <button onClick={() => { setPayments([]); setPaymentAmountInput(""); }} className="px-3 py-1.5 bg-rose-50 border border-rose-200 rounded-lg text-[11px] font-bold text-rose-700 whitespace-nowrap active:scale-95 transition-all shadow-sm">Zero Advance (Udhaar)</button>
+                  </div>
+                )}
+
+                {payments.length > 0 && (
+                  <div className="pt-2 mt-2 border-t border-zinc-200/80 space-y-2">
+                    {payments.map(payment => (
+                      <div key={payment.id} className="flex justify-between items-center text-sm bg-white p-2 rounded-lg border border-zinc-200 shadow-sm">
+                        <span className="font-bold text-zinc-700 text-xs">{payment.method}</span>
+                        <div className="flex items-center gap-3">
+                          <span className="font-bold text-emerald-600">{formatCurrency(payment.amount)}</span>
+                          <button onClick={() => removePayment(payment.id)} className="text-zinc-400 hover:text-rose-500 bg-zinc-50 p-1 rounded-md"><X className="h-3.5 w-3.5" /></button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
 
             <Button disabled={isProcessing || (balanceDue > 0 && !customerPhone)} onClick={createOrder} className="mt-8 h-12 w-full rounded-xl bg-zinc-900 text-sm font-semibold text-white shadow-sm hover:bg-zinc-800 active:scale-[0.98] transition-transform">
               {isProcessing ? "Processing..." : balanceDue > 0 ? `Save Order — ${formatCurrency(balanceDue)} Due` : "Complete Transaction"}
@@ -1071,7 +1189,6 @@ export default function Billing() {
           
           <div className="p-5 space-y-5 overflow-y-auto max-h-[70vh]">
             
-            {/* NEW: VOLUME MULTIPLIER AND TEMPLATE SELECTION */}
             <div className="flex gap-3">
                <div className="flex-1 space-y-1.5">
                  <Label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">1. Base Recipe</Label>
@@ -1080,16 +1197,20 @@ export default function Billing() {
                    {masalaTemplates.map((t) => (<option key={t.id} value={t.id}>{t.template_name}</option>))}
                  </select>
                </div>
-               <div className="w-24 space-y-1.5">
+               <div className="w-28 space-y-1.5">
                  <Label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">Multiplier</Label>
-                 <Input 
-                   type="number" 
-                   min="0" 
-                   step="1" 
-                   value={masalaMultiplier} 
-                   onChange={(e) => handleMultiplierChange(e.target.value)} 
-                   className="h-12 rounded-xl border-zinc-200 bg-white font-bold text-center shadow-sm" 
-                 />
+                 <div className="flex items-center rounded-xl border border-zinc-200 bg-white h-12 shadow-sm overflow-hidden">
+                    <button type="button" onClick={() => handleMultiplierChange(String(Math.max(1, masalaMultiplier - 1)))} className="h-full w-8 flex items-center justify-center text-zinc-500 hover:bg-zinc-50"><Minus className="h-3 w-3" /></button>
+                    <input 
+                      type="number" 
+                      min="1" 
+                      step="1" 
+                      value={masalaMultiplier} 
+                      onChange={(e) => handleMultiplierChange(e.target.value)} 
+                      className="h-full flex-1 text-center font-bold text-sm bg-transparent outline-none appearance-none m-0 p-0" 
+                    />
+                    <button type="button" onClick={() => handleMultiplierChange(String(masalaMultiplier + 1))} className="h-full w-8 flex items-center justify-center text-zinc-500 hover:bg-zinc-50"><Plus className="h-3 w-3" /></button>
+                 </div>
                </div>
             </div>
             
@@ -1118,27 +1239,52 @@ export default function Billing() {
               </div>
             </div>
 
-            {/* SMART PRICING BREAKDOWN */}
+            {/* FULLY DYNAMIC SERVICES BREAKDOWN */}
             <div className="space-y-3 pt-4 border-t border-zinc-100">
               <div className="flex justify-between items-center text-xs font-semibold text-zinc-600">
                 <span>Raw Material Cost</span>
                 <span>{formatCurrency(materialCost)}</span>
               </div>
               
-              <div className="flex justify-between items-center text-xs font-semibold text-zinc-600">
-                <div className="flex items-center gap-2">
-                  <span>Labour / मजूरी</span>
-                  <span className="text-[10px] bg-zinc-100 px-1.5 py-0.5 rounded text-zinc-500">{masalaMultiplier} batch × ₹{labourRate}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Input 
-                    type="number" 
-                    value={labourRate} 
-                    onChange={(e) => setLabourRate(Number(e.target.value))} 
-                    className="h-7 w-16 text-xs px-2 text-right border-zinc-200" 
-                  />
-                  <span className="w-16 text-right">{formatCurrency(calculatedLabourCharge)}</span>
-                </div>
+              <div className="space-y-2 pt-2 border-t border-zinc-100">
+                <Label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">3. Applied Services</Label>
+                
+                {availableServices.map(svc => {
+                  const isActive = activeServices.find(a => a.item_id === svc.id);
+                  return (
+                    <div key={svc.id} className="flex justify-between items-center text-xs font-semibold text-zinc-600">
+                      <div className="flex items-center gap-2">
+                        <Switch 
+                          checked={!!isActive} 
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              setActiveServices(prev => [...prev, { item_id: svc.id, item_name: svc.item_name, rate: Number(svc.selling_price || 0) }]);
+                            } else {
+                              setActiveServices(prev => prev.filter(a => a.item_id !== svc.id));
+                            }
+                          }} 
+                          className="scale-75 data-[state=checked]:bg-zinc-900" 
+                        />
+                        <span>{svc.item_name}</span>
+                        {isActive && <span className="text-[10px] bg-zinc-100 px-1.5 py-0.5 rounded text-zinc-500">{masalaMultiplier} batch × ₹{isActive.rate}</span>}
+                      </div>
+                      {isActive && (
+                        <div className="flex items-center gap-2">
+                          <Input 
+                            type="number" 
+                            value={isActive.rate} 
+                            onChange={(e) => {
+                              const newRate = Number(e.target.value);
+                              setActiveServices(prev => prev.map(a => a.item_id === svc.id ? { ...a, rate: newRate } : a));
+                            }} 
+                            className="h-7 w-16 text-xs px-2 text-right border-zinc-200" 
+                          />
+                          <span className="w-16 text-right">{formatCurrency(masalaMultiplier * isActive.rate)}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
 
               <div className="flex justify-between items-center pt-2 border-t border-zinc-100">
@@ -1207,28 +1353,40 @@ export default function Billing() {
                 position: absolute; left: 0; top: 0; 
                 width: 100%; margin: 0; padding: 10px; 
                 background: white; color: black; font-family: sans-serif; 
-                font-size: 13px;
+                font-size: 14px;
                 -webkit-print-color-adjust: exact !important; 
                 print-color-adjust: exact !important;
               }
               @page { size: auto; margin: 0; }
               table { width: 100%; border-collapse: collapse; margin-top: 10px; }
               th, td { border: 1px solid black; padding: 6px; text-align: left; }
-              th { font-weight: bold; background-color: #e53935; color: white; }
+              th { font-weight: bold; background-color: #a11c1c !important; color: white !important; }
               .text-right { text-align: right; }
               .text-center { text-align: center; }
               .font-bold { font-weight: bold; }
-              .jmm-header { background-color: #8B0000; color: white; padding: 10px; text-align: center; border-bottom: 5px solid #FFC107; }
-              .jmm-address { background-color: #FFECB3; color: black; padding: 8px; text-align: center; font-size: 11px; font-weight: bold; }
+              .jmm-header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid black; padding-bottom: 8px; margin-bottom: 8px; }
+              .jmm-title-box { background-color: #a11c1c !important; color: white !important; padding: 4px 12px; display: inline-block; font-size: 32px; font-weight: 900; letter-spacing: 2px; }
+              .jmm-subtitle { color: #a11c1c !important; font-size: 20px; font-weight: 900; margin-top: 4px; }
+              .jmm-phones { text-align: right; font-size: 12px; font-weight: bold; }
+              .jmm-address { background-color: #ffecb3 !important; color: black !important; padding: 8px; text-align: center; font-size: 12px; font-weight: bold; border-bottom: 2px solid black; margin-bottom: 10px; }
+              .totals-row { font-weight: 900; background-color: #f4f4f5 !important; }
+              .totals-row td { border-top: 2px solid black; }
             `}
           </style>
           
           <div className="jmm-header">
-            <h1 className="text-3xl font-black mb-1 tracking-wider m-0">JMM</h1>
-            <h2 className="text-xl font-bold m-0">जय महाराष्ट्र मसाले</h2>
+            <div className="w-1/4"></div>
+            <div className="w-1/2 text-center">
+              <div className="jmm-title-box">JMM</div>
+              <div className="jmm-subtitle">जय महाराष्ट्र मसाले</div>
+            </div>
+            <div className="w-1/4 jmm-phones">
+              <div>📞 9867987460</div>
+              <div>📞 9594777194</div>
+            </div>
           </div>
           
-          <div className="jmm-address mb-3 border-b-2 border-black">
+          <div className="jmm-address">
             दुकान नं. ३, बाबला मस्जिद, डिलाई रोड, ना. म. जोशी मार्ग, करीरोड, मुंबई - १३.<br/>
             GSTIN : 27AAKPG4562D1ZU • Fssai No.: 11518004000348
           </div>
@@ -1244,6 +1402,7 @@ export default function Billing() {
                 <th>तपशील</th>
                 <th className="text-center w-24">वजन</th>
                 <th className="text-right w-24">रुपये</th>
+                <th className="text-center w-12">पैसे</th>
               </tr>
             </thead>
             <tbody>
@@ -1254,46 +1413,54 @@ export default function Billing() {
                       <td className="font-semibold">{item.item_name}</td>
                       <td className="text-center font-bold">{item.cartQuantity} {item.base_unit || 'pc'}</td>
                       <td className="text-right font-bold">{Math.round(item.cartQuantity * Number(item.selling_price || 0))}</td>
+                      <td className="text-center">00</td>
                     </tr>
                   );
                 }
                 
                 return item.customIngredients.filter(ing => ing.qty > 0).map((ing, iIdx) => {
-                  let cost = 0;
-                  if (ing.unit === 'g') cost = (ing.qty / 1000) * ing.price_per_unit;
-                  else if (ing.unit === 'kg') cost = ing.qty * ing.price_per_unit;
-                  else if (ing.unit === 'piece') cost = ing.qty * ing.price_per_unit;
+                  const normalizedQty = getNormalizedQtyForCost(ing.qty, ing.unit, ing.base_unit);
+                  const cost = normalizedQty * (ing.price_per_unit || 0);
 
                   return (
                     <tr key={`${index}-${iIdx}`}>
                       <td className="font-semibold">{ing.item_name}</td>
-                      <td className="text-center font-bold">{ing.qty}</td>
+                      <td className="text-center font-bold">{ing.qty} {ing.unit !== 'g' && ing.unit !== 'kg' ? ing.unit : ''}</td>
                       <td className="text-right font-bold">{Math.round(cost)}</td>
+                      <td className="text-center">00</td>
                     </tr>
                   );
                 });
               })}
 
-              {/* Total Calculation Blocks matching the image */}
-              <tr className="border-t-[3px] border-black font-black bg-zinc-100">
+              <tr className="totals-row border-t-[3px] border-black">
                 <td>एकूण वजन</td>
-                <td className="text-center" colSpan={2}>{completedOrder.totalMixWeightKg ? `${completedOrder.totalMixWeightKg.toFixed(3)} kg` : '-'}</td>
+                <td className="text-center" colSpan={3}>{completedOrder.totalMixWeightKg ? `${completedOrder.totalMixWeightKg.toFixed(3)} kg` : '-'}</td>
               </tr>
-              <tr className="font-black bg-zinc-100">
-                <td colSpan={2}>मजुरी</td>
-                <td className="text-right">{completedOrder.totalMixWeightKg ? Math.round((completedOrder.masalaMultiplier || 1) * completedOrder.labourRate) : 0}</td>
-              </tr>
-              <tr className="font-black border-t-2 border-black bg-zinc-200">
+              
+              {/* DYNAMIC RECEIPT SERVICES OUTPUT */}
+              {completedOrder.receiptServices?.map((svc: any, idx: number) => (
+                <tr key={`svc-${idx}`} className="totals-row">
+                  <td colSpan={2}>{svc.name}</td>
+                  <td className="text-right">{Math.round(svc.total)}</td>
+                  <td className="text-center">00</td>
+                </tr>
+              ))}
+              
+              <tr className="totals-row border-t-[3px] border-black">
                 <td colSpan={2}>एकूण रुपये</td>
                 <td className="text-right text-lg">{Math.round(completedOrder.final_amount)}</td>
+                <td className="text-center">00</td>
               </tr>
-              <tr className="font-black">
+              <tr className="totals-row">
                 <td colSpan={2}>अॅडव्हान्स जमा</td>
                 <td className="text-right">{Math.round(completedOrder.advancePaid)}</td>
+                <td className="text-center">00</td>
               </tr>
-              <tr className="font-black border-t-2 border-black">
+              <tr className="totals-row border-t-[3px] border-black">
                 <td colSpan={2}>एकूण शिल्लक</td>
                 <td className="text-right">{Math.round(completedOrder.balanceDue)}</td>
+                <td className="text-center">00</td>
               </tr>
             </tbody>
           </table>

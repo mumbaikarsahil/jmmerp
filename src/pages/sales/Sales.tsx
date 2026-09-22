@@ -25,14 +25,15 @@ type OrderWithDetails = {
   status: string;
   customers?: { full_name: string | null; phone_number: string | null } | null;
   order_items: {
+    id: string;
     quantity: number;
     price_at_order: number;
-    items: { item_name: string; base_unit?: string; item_type?: string } | null;
+    items: { item_name: string; base_unit?: string; item_type?: string; selling_price?: number } | null;
   }[];
   order_item_ingredients?: {
     custom_quantity: number;
     unit: string;
-    items: { item_name: string; base_unit: string } | null;
+    items: { item_name: string; base_unit: string; selling_price?: number } | null;
   }[];
   payments: {
     amount: number;
@@ -53,12 +54,18 @@ const MASALA_SEQUENCE = [
 ];
 
 const normalizeUnitStr = (str: string) => String(str || "").toLowerCase().trim();
+
+const getItemObj = (itemsField: any) => {
+  if (!itemsField) return null;
+  return Array.isArray(itemsField) ? itemsField[0] : itemsField;
+};
+
 const getNormalizedQtyForCost = (qty: number, displayUnit: string, dbBaseUnit: string) => {
-  const u = normalizeUnitStr(displayUnit); const bu = normalizeUnitStr(dbBaseUnit);
+  const u = normalizeUnitStr(displayUnit); 
+  const bu = normalizeUnitStr(dbBaseUnit);
+  if (['g', 'gm', 'gram', 'grams', 'ग्रॅम', 'ग्राम'].includes(u)) return qty / 1000;
   if (u === 'piece' || u === 'nug' || u === 'pcs' || bu === 'piece') return qty;
-  if ((u === 'g' || u === 'gm' || u === 'gram' || u === 'grams') && (bu === 'kg' || bu === 'kilogram' || bu === 'kilograms')) return qty / 1000;
-  if ((u === 'ml') && (bu === 'l' || bu === 'ltr' || bu === 'liter' || bu === 'liters')) return qty / 1000;
-  if (qty >= 10 && bu.includes('kg')) return qty / 1000;
+  if (qty >= 10 && (bu.includes('kg') || !bu)) return qty / 1000;
   return qty;
 };
 
@@ -102,7 +109,7 @@ export default function Sales() {
         .select(`
           id, order_number, created_at, total_amount, payment_status, status,
           customers ( full_name, phone_number ),
-          order_items ( id, quantity, price_at_order, items ( item_name, base_unit, item_type ) ),
+          order_items ( id, quantity, price_at_order, items ( item_name, base_unit, item_type, selling_price ) ),
           payments ( amount, payment_method )
         `)
         .eq("tenant_id", tenantId) 
@@ -112,11 +119,9 @@ export default function Sales() {
 
       if (error) throw error;
 
-      // Also fetch ingredients for detailed receipt preview
-      const orderIds = data.map((o: any) => o.id);
       const { data: ingredientsData } = await (supabase as any)
         .from('order_item_ingredients')
-        .select('order_item_id, custom_quantity, unit, items (item_name, base_unit)')
+        .select('order_item_id, custom_quantity, unit, items (item_name, base_unit, selling_price)')
         .in('order_item_id', data.flatMap((o: any) => o.order_items.map((oi: any) => oi.id)));
 
       const formattedOrders: OrderWithDetails[] = (data || []).map((order: any) => {
@@ -302,15 +307,17 @@ export default function Sales() {
                         <div className="bg-zinc-50 border-t border-zinc-100 p-4 shadow-inner grid grid-cols-1 md:grid-cols-2 gap-4">
                            <div className="space-y-2">
                              <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Order Items</p>
-                             {order.order_items.map((bi, idx) => (
+                             {order.order_items.map((bi, idx) => {
+                               const itemObj = getItemObj(bi.items);
+                               return (
                                <div key={idx} className="flex justify-between items-start text-xs bg-white p-2.5 rounded-lg border border-zinc-200 shadow-sm">
                                  <div className="flex items-start gap-2 min-w-0 pr-2">
                                    <span className="font-bold text-zinc-400 text-xs shrink-0">{Math.abs(bi.quantity)}×</span>
-                                   <span className="font-bold text-zinc-800 leading-tight">{bi.items?.item_name || "Unknown"}</span>
+                                   <span className="font-bold text-zinc-800 leading-tight">{itemObj?.item_name || "Unknown"}</span>
                                  </div>
                                  <span className="font-bold text-zinc-900 shrink-0">₹{Math.abs(bi.quantity * bi.price_at_order)}</span>
                                </div>
-                             ))}
+                             );})}
                            </div>
                            <div className="space-y-2">
                              <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Payment Breakdown</p>
@@ -352,7 +359,7 @@ export default function Sales() {
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 flex justify-center">
-            {/* Visually replicating the physical receipt on screen */}
+            {/* Visually replicating the physical receipt on screen using properly normalized calculations */}
             <div className="bg-white w-[148mm] shadow-md border border-zinc-200 min-h-[200px] p-[15px] font-sans text-sm text-black">
                <img src="/jmm-bill-header.png" alt="JMM Spices" className="w-full object-contain mb-[15px] border-b-[3px] border-[#880000]" />
                <div className="flex justify-between font-bold text-[15px] mb-[10px] px-[5px]">
@@ -370,28 +377,35 @@ export default function Sales() {
                  </thead>
                  <tbody>
                    {previewOrder?.order_items.map((item: any, index: number) => {
+                     const itemObj = getItemObj(item.items);
                      if (!item.order_item_ingredients || item.order_item_ingredients.length === 0) {
                        return (
                          <tr key={index}>
-                           <td className="border border-black p-1.5 font-bold">{item.items?.item_name}</td>
-                           <td className="border border-black p-1.5 text-center font-bold border-x-[2px]">{item.quantity} {item.items?.base_unit || 'pc'}</td>
-                           <td className="border border-black p-1.5 text-right font-bold">{Math.floor(item.quantity * Number(item.price_at_order || 0))}</td>
+                           <td className="border border-black p-1.5 font-bold">{itemObj?.item_name || "Item"}</td>
+                           <td className="border border-black p-1.5 text-center font-bold border-x-[2px]">{item.quantity} {itemObj?.base_unit || 'pc'}</td>
+                           <td className="border border-black p-1.5 text-right font-bold">{Math.floor(Math.abs(item.quantity * Number(item.price_at_order || 0)))}</td>
                            <td className="border border-black p-1.5 text-center font-bold border-l-[2px]">00</td>
                          </tr>
                        );
                      }
                      const sortedPrintIng = [...item.order_item_ingredients].sort((a, b) => {
-                       let idxA = MASALA_SEQUENCE.findIndex(seq => a.items?.item_name.includes(seq));
-                       let idxB = MASALA_SEQUENCE.findIndex(seq => b.items?.item_name.includes(seq));
+                       const objA = getItemObj(a.items);
+                       const objB = getItemObj(b.items);
+                       let idxA = MASALA_SEQUENCE.findIndex(seq => objA?.item_name?.includes(seq));
+                       let idxB = MASALA_SEQUENCE.findIndex(seq => objB?.item_name?.includes(seq));
                        return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB);
                      });
                      return sortedPrintIng.filter((ing:any) => ing.custom_quantity > 0).map((ing:any, iIdx:number) => {
-                       const cost = getNormalizedQtyForCost(ing.custom_quantity, ing.unit, ing.items?.base_unit || 'kg') * (item.price_at_order || 0); // Approx cost logic for display if needed
+                       const ingItemObj = getItemObj(ing.items);
+                       const rawPrice = Number(ingItemObj?.selling_price || 0);
+                       const normalizedQty = getNormalizedQtyForCost(ing.custom_quantity, ing.unit, ingItemObj?.base_unit || 'kg');
+                       const cost = normalizedQty * rawPrice;
+
                        return (
                          <tr key={`${index}-${iIdx}`}>
-                           <td className="border border-black p-1.5 font-bold">{ing.items?.item_name}</td>
+                           <td className="border border-black p-1.5 font-bold">{ingItemObj?.item_name || "Spice"}</td>
                            <td className="border border-black p-1.5 text-center font-bold border-x-[2px]">{ing.custom_quantity} {ing.unit !== 'g' && ing.unit !== 'kg' ? ing.unit : ''}</td>
-                           <td className="border border-black p-1.5 text-right font-bold">{Math.floor(cost)}</td>
+                           <td className="border border-black p-1.5 text-right font-bold">{Math.round(cost)}</td>
                            <td className="border border-black p-1.5 text-center font-bold border-l-[2px]">00</td>
                          </tr>
                        );

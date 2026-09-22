@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import type { Database } from "@/lib/supabase";
+import { ThermalReceipt } from "@/components/receipts/ThermalReceipt";
 
 export type Item = Database["public"]["Tables"]["items"]["Row"];
 type PaymentMethod = "CASH" | "UPI" | "CARD" | "BANK_TRANSFER";
@@ -1501,139 +1502,7 @@ const [scannerOpen, setScannerOpen] = useState(false);
         </DialogContent>
       </Dialog>
 
-      {/* --- JMM BRANDED PRINTABLE RECEIPT BLOCK --- */}
-      {printType === "RECEIPT" && completedOrder && (
-        <div id="printable-receipt" className="hidden print:block">
-          <style type="text/css" media="print">
-            {`
-              body * { visibility: hidden; }
-              #printable-receipt, #printable-receipt * { visibility: visible; }
-              #printable-receipt { 
-                position: absolute; left: 0; top: 0; 
-                width: 100%; margin: 0; padding: 10px; 
-                background: white; color: black; font-family: sans-serif; 
-                font-size: 14px;
-                -webkit-print-color-adjust: exact !important; 
-                print-color-adjust: exact !important;
-              }
-              @page { size: auto; margin: 0; }
-              table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-              th, td { border: 1px solid black; padding: 6px; text-align: left; }
-              th { font-weight: bold; background-color: #a11c1c !important; color: white !important; }
-              .text-right { text-align: right; }
-              .text-center { text-align: center; }
-              .font-bold { font-weight: bold; }
-              .jmm-header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid black; padding-bottom: 8px; margin-bottom: 8px; }
-              .jmm-title-box { background-color: #a11c1c !important; color: white !important; padding: 4px 12px; display: inline-block; font-size: 32px; font-weight: 900; letter-spacing: 2px; }
-              .jmm-subtitle { color: #a11c1c !important; font-size: 20px; font-weight: 900; margin-top: 4px; }
-              .jmm-phones { text-align: right; font-size: 12px; font-weight: bold; }
-              .jmm-address { background-color: #ffecb3 !important; color: black !important; padding: 8px; text-align: center; font-size: 12px; font-weight: bold; border-bottom: 2px solid black; margin-bottom: 10px; }
-              .totals-row { font-weight: 900; background-color: #f4f4f5 !important; }
-              .totals-row td { border-top: 2px solid black; }
-            `}
-          </style>
-          
-          <div className="jmm-header">
-            <div className="w-1/4"></div>
-            <div className="w-1/2 text-center">
-              <div className="jmm-title-box">JMM</div>
-              <div className="jmm-subtitle">जय महाराष्ट्र मसाले</div>
-            </div>
-            <div className="w-1/4 jmm-phones">
-              <div>📞 9867987460</div>
-              <div>📞 9594777194</div>
-            </div>
-          </div>
-          
-          <div className="jmm-address">
-            दुकान नं. ३, बाबला मस्जिद, डिलाई रोड, ना. म. जोशी मार्ग, करीरोड, मुंबई - १३.<br/>
-            GSTIN : 27AAKPG4562D1ZU • Fssai No.: 11518004000348
-          </div>
-
-          <div className="flex justify-between font-bold text-sm mb-2 px-1">
-            <div>नाव: {completedOrder.customerName || "Walk-in"}</div>
-            <div>दि.: {new Date().toLocaleDateString('en-IN')}</div>
-          </div>
-
-          <table>
-            <thead>
-              <tr>
-                <th>तपशील</th>
-                <th className="text-center w-24">वजन</th>
-                <th className="text-right w-24">रुपये</th>
-                <th className="text-center w-12">पैसे</th>
-              </tr>
-            </thead>
-            <tbody>
-              {completedOrder.cartItems.map((item: OrderCartItem, index: number) => {
-                if (item.customIngredients.length === 0) {
-                  return (
-                    <tr key={index}>
-                      <td className="font-semibold">{item.item_name}</td>
-                      <td className="text-center font-bold">{item.cartQuantity} {item.base_unit || 'pc'}</td>
-                      <td className="text-right font-bold">{Math.round(item.cartQuantity * Number(item.selling_price || 0))}</td>
-                      <td className="text-center">00</td>
-                    </tr>
-                  );
-                }
-                
-                // Ensure print matches strict UI sorting
-                const sortedPrintIng = [...item.customIngredients].sort((a, b) => {
-                  let idxA = MASALA_SEQUENCE.findIndex(seq => a.item_name.includes(seq));
-                  let idxB = MASALA_SEQUENCE.findIndex(seq => b.item_name.includes(seq));
-                  if (idxA === -1) idxA = 999;
-                  if (idxB === -1) idxB = 999;
-                  return idxA - idxB;
-                });
-
-                return sortedPrintIng.filter(ing => ing.qty > 0).map((ing, iIdx) => {
-                  const normalizedQty = getNormalizedQtyForCost(ing.qty, ing.unit, ing.base_unit);
-                  const cost = normalizedQty * (ing.price_per_unit || 0);
-
-                  return (
-                    <tr key={`${index}-${iIdx}`}>
-                      <td className="font-semibold">{ing.item_name}</td>
-                      <td className="text-center font-bold">{ing.qty} {ing.unit !== 'g' && ing.unit !== 'kg' ? ing.unit : ''}</td>
-                      <td className="text-right font-bold">{Math.round(cost)}</td>
-                      <td className="text-center">00</td>
-                    </tr>
-                  );
-                });
-              })}
-
-              <tr className="totals-row border-t-[3px] border-black">
-                <td>एकूण वजन</td>
-                <td className="text-center" colSpan={3}>{completedOrder.totalMixWeightKg ? `${completedOrder.totalMixWeightKg.toFixed(3)} kg` : '-'}</td>
-              </tr>
-              
-              {/* DYNAMIC RECEIPT SERVICES OUTPUT */}
-              {completedOrder.receiptServices?.map((svc: any, idx: number) => (
-                <tr key={`svc-${idx}`} className="totals-row">
-                  <td colSpan={2}>{svc.name}</td>
-                  <td className="text-right">{Math.round(svc.total)}</td>
-                  <td className="text-center">00</td>
-                </tr>
-              ))}
-              
-              <tr className="totals-row border-t-[3px] border-black">
-                <td colSpan={2}>एकूण रुपये</td>
-                <td className="text-right text-lg">{Math.round(completedOrder.final_amount)}</td>
-                <td className="text-center">00</td>
-              </tr>
-              <tr className="totals-row">
-                <td colSpan={2}>अॅडव्हान्स जमा</td>
-                <td className="text-right">{Math.round(completedOrder.advancePaid)}</td>
-                <td className="text-center">00</td>
-              </tr>
-              <tr className="totals-row border-t-[3px] border-black">
-                <td colSpan={2}>एकूण शिल्लक</td>
-                <td className="text-right">{Math.round(completedOrder.balanceDue)}</td>
-                <td className="text-center">00</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      )}
+      <ThermalReceipt order={completedOrder} source="billing" />
     </AppLayout>
   );
 }

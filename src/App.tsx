@@ -27,6 +27,7 @@ import CRM from "./pages/crm/crm";
 import Production from "./pages/production/Production";
 import MixMasala from "./pages/mixmasala/MixMasala";
 import ManageUsers from "@/pages/admin/ManageUsers"; // Added Staff Management
+import ReceiptSettings from "@/pages/settings/ReceiptSettings";
 
 const queryClient = new QueryClient();
 
@@ -148,6 +149,12 @@ const AppRoutes = () => {
       <Route path="/crm" element={
         <ProtectedRoute>
           <CRM />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/receipt-settings" element={
+        <ProtectedRoute>
+          <ReceiptSettings />
         </ProtectedRoute>
       } />
 

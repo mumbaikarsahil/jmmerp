@@ -1,36 +1,35 @@
 import { useState, useEffect } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card } from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Alert } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase"; 
+import { useLanguage } from "@/contexts/LanguageContext";
 import { 
-  PlusCircle, 
-  ShoppingCart, 
-  BarChart3, 
-  Boxes, 
-  BookUser, 
-  Settings, 
-  TrendingUp,
-  ShieldAlert,
-  Users,
-  FlaskConical,
-  Sparkles,
-  Megaphone,
-  Search,
-  X
+  PlusCircle, ShoppingCart, BarChart3, Boxes, BookUser, Settings, 
+  TrendingUp, ShieldAlert, ShieldCheck, Users, FlaskConical, 
+  Sparkles, Megaphone, Search, X, Nut, Package, Scale, Droplet, Mic, ChevronRight
 } from "lucide-react";
 
 const SUPER_ADMIN_EMAIL = "mumbaikarsahill@gmail.com";
 
 const Index = () => {
+  const navigate = useNavigate();
+  const { t, language } = useLanguage();
+  
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [userRole, setUserRole] = useState<string>("sales");
   const [userName, setUserName] = useState<string>("System");
+  const [tenantId, setTenantId] = useState<string | null>(null);
+  
   const [isLoading, setIsLoading] = useState(true);
-  const [greeting, setGreeting] = useState("Good day");
+  const [greeting, setGreeting] = useState("");
+  
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [isListening, setIsListening] = useState(false);
 
   useEffect(() => {
     const initializeUser = async () => {
@@ -42,17 +41,16 @@ const Index = () => {
             setIsSuperAdmin(true);
           }
 
-          const { data } = await supabase
+          const { data } = await (supabase as any)
             .from("profiles")
-            .select("role, full_name")
+            .select("role, full_name, tenant_id")
             .eq("id", session.user.id)
             .single();
 
-          const profile = data as { role: string | null; full_name: string | null } | null;
-
-          if (profile) {
-            setUserRole(profile.role?.toLowerCase() || "sales");
-            setUserName(profile.full_name || "System");
+          if (data) {
+            setUserRole(data.role?.toLowerCase() || "sales");
+            setUserName(data.full_name || "System");
+            setTenantId(data.tenant_id);
           }
         }
       } catch (error) {
@@ -65,104 +63,101 @@ const Index = () => {
     initializeUser();
 
     const hour = new Date().getHours();
-    if (hour < 12) setGreeting("Good morning");
-    else if (hour < 17) setGreeting("Good afternoon");
-    else setGreeting("Good evening");
-  }, []);
+    if (hour < 12) setGreeting(t('good_morning'));
+    else if (hour < 17) setGreeting(t('good_afternoon'));
+    else setGreeting(t('good_evening'));
+  }, [t]);
+
+  const startVoiceSearch = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) return alert("Voice search is not supported in this browser.");
+    
+    const recognition = new SpeechRecognition();
+    recognition.lang = language === 'MR' ? 'mr-IN' : language === 'HI' ? 'hi-IN' : 'en-IN'; 
+    
+    recognition.onstart = () => setIsListening(true);
+    recognition.onend = () => setIsListening(false);
+    recognition.onresult = (e: any) => {
+      setSearchQuery(e.results[0][0].transcript);
+    };
+    recognition.start();
+  };
+
+  useEffect(() => {
+    const searchDB = async () => {
+      if (!searchQuery.trim() || !tenantId) {
+        setSearchResults([]);
+        return;
+      }
+      setIsSearching(true);
+      
+      const routes = baseMenuOptions.filter(option => 
+        option.allowedRoles.includes(userRole) && 
+        (option.label.toLowerCase().includes(searchQuery.toLowerCase()) || 
+         option.description.toLowerCase().includes(searchQuery.toLowerCase()))
+      ).map(r => ({ name: r.label, path: r.href, icon: r.icon, type: 'route' }));
+
+      const { data: items } = await (supabase as any)
+        .from('items')
+        .select('id, item_name, category')
+        .eq('tenant_id', tenantId)
+        .or(`item_name.ilike.%${searchQuery}%,english_name.ilike.%${searchQuery}%`)
+        .limit(5);
+
+      setSearchResults([
+        ...routes,
+        ...(items || []).map((item: any) => ({
+          name: item.item_name,
+          category: item.category,
+          path: `/billing?search=${encodeURIComponent(item.item_name)}`,
+          icon: ShoppingCart,
+          type: 'product'
+        }))
+      ]);
+      setIsSearching(false);
+    };
+
+    const delayDebounceFn = setTimeout(() => searchDB(), 300);
+    return () => clearTimeout(delayDebounceFn);
+  }, [searchQuery, userRole, tenantId]);
+
+  // Premium Minimalist Quick Tiles (Primary Categories)
+  const QUICK_TILES = [
+    { label: t('yearly_masala'), icon: FlaskConical, text: "text-emerald-600", bg: "bg-emerald-100", path: "/billing?action=yearly_masala" },
+    { label: t('dryfruits'), icon: Nut, text: "text-amber-600", bg: "bg-amber-100", path: `/billing?category=${encodeURIComponent("Dryfruits")}` },
+    { label: t('ready_masala'), icon: Package, text: "text-rose-600", bg: "bg-rose-100", path: `/billing?category=${encodeURIComponent("JMM Spices")}` },
+    { label: t('seeds'), icon: Scale, text: "text-blue-600", bg: "bg-blue-100", path: `/billing?category=${encodeURIComponent("Seeds")}` },
+    { label: t('oils'), icon: Droplet, text: "text-purple-600", bg: "bg-purple-100", path: `/billing?category=${encodeURIComponent("Oils & Ghee")}` },
+  ];
+
+  // Space-saving Pills (Secondary Categories)
+  const SECONDARY_CATEGORIES = [
+    "Pickles & Papad",
+    "Tea & Coffee",
+    "Salt & Essentials",
+    "Essences & Colors",
+    "Groceries & Ready Mixes",
+    "Savai Masala",
+    "Everest Masala",
+    "Suhana / Pravin"
+  ];
 
   const baseMenuOptions = [
-    { 
-      href: "/billing", 
-      label: "POS Register", 
-      icon: ShoppingCart, 
-      description: "Start billing session",
-      allowedRoles: ["admin", "manager", "sales"],
-      iconBg: "bg-[#6366f1]" 
-    },
-    { 
-      href: "/mix-masala", 
-      label: "Mix Masala", 
-      icon: FlaskConical, 
-      description: "Varshbharache & blends",
-      allowedRoles: ["admin", "manager", "sales"],
-      iconBg: "bg-[#d946ef]" 
-    },
-    { 
-      href: "/inventory/add", 
-      label: "Add Stock", 
-      icon: PlusCircle, 
-      description: "Inward new shipments",
-      allowedRoles: ["admin", "manager"],
-      iconBg: "bg-[#3b82f6]" 
-    },
-    { 
-      href: "/udhaar", 
-      label: "Advance / Due", 
-      icon: BookUser, 
-      description: "Pending ledgers",
-      allowedRoles: ["admin", "manager"],
-      iconBg: "bg-[#14b8a6]" 
-    },
-    { 
-      href: "/manage", 
-      label: "Manage Stock", 
-      icon: Boxes, 
-      description: "Global stock logic",
-      allowedRoles: ["admin", "manager"],
-      iconBg: "bg-[#27272a]" 
-    },
-    { 
-      href: "/sales", 
-      label: "Revenue", 
-      icon: TrendingUp, 
-      description: "Sales cashbook",
-      allowedRoles: ["admin", "manager"],
-      iconBg: "bg-[#10b981]" 
-    },
-    { 
-      href: "/crm", 
-      label: "Discovery", 
-      icon: Users, 
-      description: "Scan & quote",
-      allowedRoles: ["admin", "manager"],
-      iconBg: "bg-[#f97316]" 
-    },
-    { 
-      href: "/analytics", 
-      label: "Analytics", 
-      icon: BarChart3, 
-      description: "Store reporting",
-      allowedRoles: ["admin", "manager"],
-      iconBg: "bg-[#a855f7]" 
-    },
-    { 
-      href: "/settings", 
-      label: "Master Config", 
-      icon: Settings, 
-      description: "System settings",
-      allowedRoles: ["admin", "manager", "sales"],
-      iconBg: "bg-[#57534e]" 
-    },
+    { href: "/billing", label: t('billing'), icon: ShoppingCart, description: "Start billing session", allowedRoles: ["admin", "manager", "sales"], iconBg: "bg-[#6366f1]" },
+    { href: "/inventory/add", label: "Add Stock", icon: PlusCircle, description: "Inward new shipments", allowedRoles: ["admin", "manager"], iconBg: "bg-[#3b82f6]" },
+    { href: "/udhaar", label: "Advance / Due", icon: BookUser, description: "Pending ledgers", allowedRoles: ["admin", "manager"], iconBg: "bg-[#14b8a6]" },
+    { href: "/manage", label: t('inventory'), icon: Boxes, description: "Global stock logic", allowedRoles: ["admin", "manager"], iconBg: "bg-[#27272a]" },
+    { href: "/sales", label: t('sales'), icon: TrendingUp, description: "Sales cashbook", allowedRoles: ["admin", "manager"], iconBg: "bg-[#10b981]" },
+    { href: "/crm", label: "Discovery", icon: Users, description: "Scan & quote", allowedRoles: ["admin", "manager"], iconBg: "bg-[#f97316]" },
+    { href: "/analytics", label: "Analytics", icon: BarChart3, description: "Store reporting", allowedRoles: ["admin", "manager"], iconBg: "bg-[#a855f7]" },
+    { href: "/settings", label: t('settings'), icon: Settings, description: "System settings", allowedRoles: ["admin", "manager", "sales"], iconBg: "bg-[#57534e]" },
+    { href: "/manage-users", label: "Staff Access", icon: ShieldCheck, description: "Manage employee sessions", allowedRoles: ["admin"], iconBg: "bg-[#0ea5e9]" },
   ];
 
   let visibleMenu = baseMenuOptions.filter(option => option.allowedRoles.includes(userRole));
 
-  if (searchQuery) {
-    visibleMenu = visibleMenu.filter(option => 
-      option.label.toLowerCase().includes(searchQuery.toLowerCase()) || 
-      option.description.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }
-
   if (isSuperAdmin) {
-    visibleMenu.push({
-      href: "/super-admin-secret",
-      label: "System Override",
-      icon: ShieldAlert,
-      description: "Root DB access",
-      allowedRoles: ["admin"],
-      iconBg: "bg-[#ef4444]" 
-    });
+    visibleMenu.push({ href: "/super-admin-secret", label: "System Override", icon: ShieldAlert, description: "Root DB access", allowedRoles: ["admin"], iconBg: "bg-[#ef4444]" });
   }
 
   if (isLoading) {
@@ -181,7 +176,6 @@ const Index = () => {
   return (
     <AppLayout>
       <div className="min-h-screen bg-[#fcfcfd] font-sans pb-32">
-        {/* TIGHTENED TOP PADDING: pt-3 instead of pt-6 */}
         <div className="px-4 sm:px-6 max-w-5xl mx-auto pt-3 sm:pt-5 animate-in fade-in duration-300">
           
           <div className="flex items-center gap-1.5 mb-1.5">
@@ -189,7 +183,6 @@ const Index = () => {
             <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Headquarters</span>
           </div>
 
-          {/* TIGHTENED MARGIN: mb-3 instead of mb-6 */}
           <div className="flex flex-col mb-3">
             <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight leading-tight">
               <span className="bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 bg-clip-text text-transparent mr-1.5">
@@ -199,7 +192,6 @@ const Index = () => {
             </h1>
           </div>
 
-          {/* COMPACT ALERTS: mb-4 instead of mb-6 */}
           {!isSupabaseConfigured ? (
             <Alert variant="destructive" className="mb-4 py-2 px-3 border-rose-200 bg-rose-50 text-rose-900 rounded-xl shadow-sm flex items-center">
               <ShieldAlert className="h-4 w-4 shrink-0" />
@@ -217,18 +209,90 @@ const Index = () => {
             </div>
           )}
 
-          {/* COMPACT SEARCH: mb-4 instead of mb-8, h-10 instead of h-12 */}
-          <div className="relative mb-4">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-blue-500" />
+          {/* OMNIBAR SEARCH WITH MIC */}
+          <div className="relative mb-6 z-20">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-blue-500" />
             <Input 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search modules..." 
-              className="h-10 pl-9 pr-4 rounded-xl border-zinc-200 shadow-sm bg-white text-sm font-semibold placeholder:text-zinc-400 focus-visible:ring-1 focus-visible:ring-blue-500 transition-all"
+              placeholder={t('search_placeholder')}
+              className="h-14 pl-10 pr-12 rounded-2xl border-zinc-200 shadow-sm bg-white text-base font-semibold placeholder:text-zinc-400 focus-visible:ring-2 focus-visible:ring-blue-500 transition-all"
             />
+            
+            <button 
+              onClick={startVoiceSearch} 
+              className={`absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-xl transition-all ${isListening ? 'bg-rose-100 text-rose-600 animate-pulse' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-700'}`}
+            >
+              <Mic className="h-4 w-4" />
+            </button>
+            
+            {searchQuery && (
+              <Card className="absolute top-full left-0 right-0 mt-2 overflow-hidden shadow-2xl border-zinc-200 rounded-2xl bg-white max-h-[300px] overflow-y-auto">
+                {isSearching ? (
+                  <div className="p-4 text-center text-sm text-zinc-500 font-bold">Searching...</div>
+                ) : searchResults.length > 0 ? (
+                  <div className="flex flex-col">
+                    {searchResults.map((result, idx) => (
+                      <button 
+                        key={idx}
+                        onClick={() => navigate(result.path)}
+                        className="flex items-center gap-3 p-4 hover:bg-zinc-50 text-left border-b border-zinc-100 last:border-0"
+                      >
+                        <div className="h-10 w-10 rounded-xl bg-zinc-100 flex items-center justify-center shrink-0">
+                          <result.icon className="h-5 w-5 text-zinc-600" />
+                        </div>
+                        <div>
+                          <p className="font-bold text-zinc-900 text-sm">{result.name}</p>
+                          <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mt-0.5">
+                            {result.type === 'route' ? 'System App' : result.category || 'Product Catalog'}
+                          </p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-4 text-center text-sm text-zinc-500 font-bold">No results found</div>
+                )}
+              </Card>
+            )}
           </div>
 
-          {/* TIGHTENED MARGIN: mb-2.5 instead of mb-3 */}
+          {/* UPGRADED QUICK ACTIONS & CATEGORIES */}
+          <div className="mb-8">
+            <h3 className="text-[10px] font-bold text-zinc-400 uppercase tracking-[0.15em] mb-3">{t('quick_actions')}</h3>
+            
+            {/* Primary Tiles */}
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-3">
+              {QUICK_TILES.map((tile, idx) => (
+                <button 
+                  key={idx} 
+                  onClick={() => navigate(tile.path)}
+                  className="group relative overflow-hidden flex flex-col items-center justify-center p-4 rounded-[20px] bg-white border border-zinc-200/80 transition-all active:scale-95 shadow-sm hover:shadow-md hover:border-zinc-300"
+                >
+                  <div className={`h-12 w-12 rounded-2xl flex items-center justify-center mb-2.5 ${tile.bg} ${tile.text} group-hover:scale-110 transition-transform duration-300`}>
+                    <tile.icon className="h-6 w-6" />
+                  </div>
+                  <span className="font-bold text-[11px] text-zinc-800 text-center uppercase tracking-wide leading-tight">{tile.label}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Secondary Space-Saving Category Pills */}
+            <div className="flex flex-wrap gap-2">
+              {SECONDARY_CATEGORIES.map((cat, idx) => (
+                <button 
+                  key={idx}
+                  onClick={() => navigate(`/billing?category=${encodeURIComponent(cat)}`)}
+                  className="flex items-center px-3 py-2 bg-white border border-zinc-200/80 rounded-[14px] text-xs font-bold text-zinc-600 shadow-sm hover:border-zinc-300 hover:shadow-md hover:text-zinc-900 active:scale-95 transition-all"
+                >
+                  {cat}
+                  <ChevronRight className="h-3.5 w-3.5 ml-1 text-zinc-400" />
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* MAIN MODULES */}
           <div className="mb-2.5">
             <h3 className="text-[10px] font-bold text-zinc-400 uppercase tracking-[0.15em]">Your Workspace</h3>
           </div>
@@ -256,12 +320,6 @@ const Index = () => {
                 </Card>
               </Link>
             ))}
-            
-            {visibleMenu.length === 0 && (
-               <div className="col-span-full py-6 text-center text-xs text-zinc-500 font-semibold">
-                 No apps found matching "{searchQuery}"
-               </div>
-            )}
           </div>
 
         </div>

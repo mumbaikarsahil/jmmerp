@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -15,7 +15,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
@@ -28,6 +28,15 @@ import {
 } from "lucide-react";
 
 export type Item = Database["public"]["Tables"]["items"]["Row"];
+
+// EXACT SEQUENCE BASED ON JMM PHYSICAL BILL BOOK
+const STRICT_MASALA_SEQUENCE = [
+  "बेडगी", "लवंगी", "काश्मिरी", "मिरची", "धणे", "हळकुंड", "मिरी", "बडीशेप", 
+  "खसखस", "लवंग", "दालचिनी", "लालफुल", "चक्रिफुल", "मसाला वेलची", "दगडफुल", 
+  "तेजपान", "शहाजिरे", "जायफळ", "जायपत्री", "त्रिफळ", "नागकेशर", "कबाब चिनी",
+  "हिंग", "मेथी", "राई", "जिरा", "पिंपळी", "सुंठ", "हिरवी वेलची", "गुलाब पाकळी", 
+  "कसुरी मेथी", "ओवा", "खोबरा", "लसूण", "मीठ", "तेल"
+];
 
 const compressImage = (file: File): Promise<Blob> => {
   return new Promise((resolve, reject) => {
@@ -107,6 +116,7 @@ export default function ManageInventory() {
   const [items, setItems] = useState<Item[]>([]);
   const [filteredItems, setFilteredItems] = useState<Item[]>([]);
   const [templates, setTemplates] = useState<MasalaTemplate[]>([]);
+  const [rawMaterials, setRawMaterials] = useState<Item[]>([]);
   
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -141,6 +151,17 @@ export default function ManageInventory() {
   const watchedPieces = useWatch({ control, name: "pieces_per_box" });
   const watchedBoxes = useWatch({ control, name: "number_of_boxes" });
   const watchedShowOnWeb = useWatch({ control, name: "show_on_web" });
+
+  // Compute strictly sorted raw materials once
+  const sortedRawMaterials = useMemo(() => {
+    return [...rawMaterials].sort((a, b) => {
+      let idxA = STRICT_MASALA_SEQUENCE.findIndex(seq => getSafeItemName(a).includes(seq));
+      let idxB = STRICT_MASALA_SEQUENCE.findIndex(seq => getSafeItemName(b).includes(seq));
+      if (idxA === -1) idxA = 999;
+      if (idxB === -1) idxB = 999;
+      return idxA - idxB;
+    });
+  }, [rawMaterials]);
 
   useEffect(() => {
     if (watchedIsPack && watchedPieces && watchedBoxes !== undefined) {
@@ -216,7 +237,11 @@ export default function ManageInventory() {
   const fetchItems = async (tenantId: string) => {
     const { data, error } = await supabase.from("items").select("*").eq("tenant_id", tenantId).order("created_at", { ascending: false });
     if (error) toast({ title: "Error fetching inventory", description: error.message, variant: "destructive" });
-    else { setItems(data || []); setFilteredItems(data || []); }
+    else { 
+      setItems(data || []); 
+      setFilteredItems(data || []); 
+      setRawMaterials((data || []).filter((item: Item) => (item as any).item_type === "RAW_MATERIAL"));
+    }
   };
 
   const fetchTemplates = async (tenantId: string) => {
@@ -313,67 +338,48 @@ export default function ManageInventory() {
 
   const getItemTypeBadge = (type: string) => {
     switch(type) {
-      case "RAW_MATERIAL": return <span className="bg-emerald-100 text-emerald-700 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-emerald-200">Raw Spice</span>;
-      case "SERVICE": return <span className="bg-purple-100 text-purple-700 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-purple-200">Service</span>;
-      default: return <span className="bg-blue-100 text-blue-700 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-blue-200">Ready Blend</span>;
+      case "RAW_MATERIAL": return <span className="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider border border-emerald-200 whitespace-nowrap">Raw Spice</span>;
+      case "SERVICE": return <span className="bg-purple-100 text-purple-700 px-3 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider border border-purple-200 whitespace-nowrap">Service</span>;
+      default: return <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider border border-blue-200 whitespace-nowrap">Ready Blend</span>;
     }
   };
 
-  // --- TEMPLATE MANAGEMENT LOGIC ---
+  // --- STRICT SEQUENCE TEMPLATE MANAGEMENT ---
   const openTemplateEditor = (template: MasalaTemplate | 'new') => {
+    // 1. Build the base array of all strict ingredients (qty = 0)
+    const baseIngredients: TempIngredient[] = sortedRawMaterials.map(rm => ({
+        item_id: rm.id,
+        item_name: getSafeItemName(rm),
+        qty: 0,
+        unit: (rm as any).base_unit === 'kg' ? 'g' : ((rm as any).base_unit || 'g')
+    }));
+
     if (template === 'new') {
       setEditingTemplate({ id: 'new', template_name: '', template_ingredients: [] });
-      setTempIngredients([]);
+      setTempIngredients(baseIngredients);
     } else {
       setEditingTemplate(template);
       
-      // DEDUPLICATE existing ingredients so the UI doesn't crash from old DB ghosts
-      const uniqueIngredients: TempIngredient[] = [];
-      const seenItemIds = new Set<number>();
-      
+      // 2. Map existing saved quantities over the strict base ingredients
+      const existingMap = new Map<number, { qty: number, unit: string }>();
       for (const ing of template.template_ingredients) {
-        if (!seenItemIds.has(ing.item_id)) {
-          seenItemIds.add(ing.item_id);
-          uniqueIngredients.push({
-            item_id: ing.item_id,
-            item_name: ing.items?.item_name || "Unknown Item",
-            qty: Number(ing.base_qty),
-            unit: ing.unit
-          });
-        }
+        existingMap.set(ing.item_id, { qty: Number(ing.base_qty), unit: ing.unit });
       }
-      
-      setTempIngredients(uniqueIngredients);
-    }
-  };
 
-  const addIngredientToTemplate = (itemId: number) => {
-    const raw = items.find(i => i.id === itemId);
-    if (!raw) return;
-    
-    setTempIngredients(prev => {
-      // Duplicate Key Prevention
-      if (prev.some(ing => ing.item_id === itemId)) {
-        toast({ 
-          title: "Ingredient already added", 
-          description: `${raw.item_name} is already in the recipe. Please update its quantity directly.`,
-          variant: "destructive"
-        });
-        return prev;
-      }
-      return [...prev, { item_id: raw.id, item_name: raw.item_name, qty: 0, unit: 'g' }];
-    });
+      const mergedIngredients = baseIngredients.map(base => ({
+          ...base,
+          qty: existingMap.has(base.item_id) ? existingMap.get(base.item_id)!.qty : 0,
+          unit: existingMap.has(base.item_id) ? existingMap.get(base.item_id)!.unit : base.unit
+      }));
+      
+      setTempIngredients(mergedIngredients);
+    }
   };
 
   const updateCustomIngredient = (itemId: number, quantity: number) => {
     setTempIngredients(prev => prev.map(ing => ing.item_id === itemId ? { ...ing, qty: quantity } : ing));
   };
 
-  const removeIngredientFromTemplate = (itemId: number) => {
-    setTempIngredients(prev => prev.filter(ing => ing.item_id !== itemId));
-  };
-
-  // SMART SYNC ENGINE: Uses UPSERTS to prevent DB ghosting and cleans up existing duplicates
   const saveTemplate = async () => {
     if (!editingTemplate || !currentTenantId) return;
     if (!editingTemplate.template_name.trim()) return toast({ title: "Name Required", variant: "destructive" });
@@ -382,7 +388,6 @@ export default function ManageInventory() {
     try {
       let targetTemplateId = editingTemplate.id;
 
-      // 1. Ensure the parent template exists
       if (targetTemplateId === 'new') {
         const { data, error } = await (supabase as any).from("masala_templates").insert({
           tenant_id: currentTenantId,
@@ -397,7 +402,6 @@ export default function ManageInventory() {
         if (error) throw error;
       }
 
-      // 2. Fetch existing ingredients directly to clean up ghosts
       const { data: existingRows } = await (supabase as any)
         .from("template_ingredients")
         .select("id, item_id")
@@ -407,31 +411,30 @@ export default function ManageInventory() {
       const toUpdate: any[] = [];
       const idsToDelete: string[] = [];
 
-      // Map item_id -> id (captures duplicates for deletion)
       const existingMap = new Map<number, string>();
       
       if (existingRows) {
         for (const row of existingRows) {
           if (!existingMap.has(row.item_id)) {
-            existingMap.set(row.item_id, row.id); // Keep the first primary key for updating
+            existingMap.set(row.item_id, row.id);
           } else {
-            idsToDelete.push(row.id); // Ghost duplicate identified! Mark for deletion.
+            idsToDelete.push(row.id); 
           }
         }
       }
 
-      // Distribute UI items into Insert vs Update
       for (const ing of tempIngredients) {
+        // We save ALL items, even if qty is 0, as per strict physical bill book requirements.
         if (existingMap.has(ing.item_id)) {
           toUpdate.push({
-            id: existingMap.get(ing.item_id), // Use primary key to safely Upsert
+            id: existingMap.get(ing.item_id), 
             tenant_id: currentTenantId,
             template_id: targetTemplateId,
             item_id: ing.item_id,
             base_qty: ing.qty,
             unit: ing.unit
           });
-          existingMap.delete(ing.item_id); // Remove from map so it's not deleted
+          existingMap.delete(ing.item_id); 
         } else {
           toInsert.push({
             tenant_id: currentTenantId,
@@ -443,21 +446,17 @@ export default function ManageInventory() {
         }
       }
 
-      // Any ID left in the map was removed by the user in the UI. Mark for deletion.
       for (const removedId of existingMap.values()) {
         idsToDelete.push(removedId);
       }
 
-      // 3. Execute Cleanups and Inserts
       if (idsToDelete.length > 0) {
         await (supabase as any).from("template_ingredients").delete().in("id", idsToDelete);
       }
-      
       if (toUpdate.length > 0) {
         const { error: upError } = await (supabase as any).from("template_ingredients").upsert(toUpdate);
         if (upError) throw upError;
       }
-
       if (toInsert.length > 0) {
         const { error: inError } = await (supabase as any).from("template_ingredients").insert(toInsert);
         if (inError) throw inError;
@@ -563,7 +562,7 @@ export default function ManageInventory() {
                               </div>
                             </div>
                             <h3 className="font-bold text-lg text-zinc-900 leading-tight mb-1.5">{t.template_name}</h3>
-                            <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">{t.template_ingredients.length} raw spices</p>
+                            <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">{t.template_ingredients.length} configured spices</p>
                           </div>
                           <div className="border-t border-zinc-100 bg-zinc-50 p-3">
                              <Button variant="outline" size="sm" onClick={() => openTemplateEditor(t)} className="w-full rounded-xl text-xs font-semibold border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-100 text-zinc-700">
@@ -609,9 +608,9 @@ export default function ManageInventory() {
                           </button>
 
                           <div className="flex-1 min-w-0 flex flex-col justify-center">
-                             <div className="mb-1">{getItemTypeBadge(typeStr)}</div>
+                             <div className="mb-2">{getItemTypeBadge(typeStr)}</div>
                              <h3 className="font-bold text-base text-zinc-900 truncate leading-tight">{item.item_name}</h3>
-                             <p className="text-[11px] text-zinc-500 font-mono mt-0.5 font-medium">{item.item_code}</p>
+                             <p className="text-[11px] text-zinc-500 font-mono mt-1 font-medium">{item.item_code}</p>
                           </div>
                         </div>
 
@@ -666,11 +665,11 @@ export default function ManageInventory() {
               </div>
 
               {/* --- DESKTOP VIEW (ITEMS) --- */}
-              <Card className="hidden md:block shadow-sm border-zinc-200 rounded-3xl overflow-hidden bg-white w-full">
+              <Card className="hidden md:block shadow-sm border-zinc-200 rounded-[24px] overflow-hidden bg-white w-full">
                 <CardContent className="p-0">
                   <div className="overflow-x-auto w-full">
                     <Table className="w-full">
-                      <TableHeader className="bg-zinc-50 border-b border-zinc-200">
+                      <TableHeader className="bg-zinc-50/80 border-b border-zinc-200">
                         <TableRow className="hover:bg-transparent">
                           <TableHead className="w-20 text-center py-4">Photo</TableHead>
                           <TableHead className="font-bold text-zinc-500 uppercase tracking-wider text-[11px] py-4">Identity</TableHead>
@@ -702,7 +701,7 @@ export default function ManageInventory() {
                                    </button>
                                 </TableCell>
                                 <TableCell className="p-4 align-middle">
-                                  <div className="flex flex-col items-start gap-1.5">
+                                  <div className="flex flex-col items-start gap-2">
                                     {getItemTypeBadge(typeStr)}
                                     <span className="font-mono text-[11px] font-semibold text-zinc-400 tracking-wide">{item.item_code}</span>
                                   </div>
@@ -714,7 +713,7 @@ export default function ManageInventory() {
                                   {isService ? (
                                     <span className="text-xs text-zinc-400 font-semibold">—</span>
                                   ) : (
-                                    <span className="inline-flex text-xs font-semibold text-zinc-700 bg-zinc-100 border border-zinc-200 px-2.5 py-1 rounded-lg">
+                                    <span className="inline-flex text-xs font-semibold text-zinc-700 bg-zinc-100 border border-zinc-200 px-3 py-1 rounded-lg">
                                         {item.size || 'N/A'}
                                     </span>
                                   )}
@@ -770,55 +769,63 @@ export default function ManageInventory() {
         </div>
       </div>
 
-      {/* EDIT TEMPLATE MODAL */}
+      {/* EDIT TEMPLATE MODAL (STRICT SEQUENCE iPAD GRID) */}
       <Dialog open={!!editingTemplate} onOpenChange={(open) => !open && setEditingTemplate(null)}>
-        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto rounded-3xl p-0 border-zinc-200 shadow-2xl">
-           <div className="px-6 py-5 border-b border-zinc-100 bg-zinc-50/50 sticky top-0 z-10 backdrop-blur-md">
-              <DialogTitle className="text-lg font-semibold tracking-tight text-zinc-900">
-                {editingTemplate?.id === 'new' ? 'Create New Recipe' : 'Edit Recipe'}
-              </DialogTitle>
+        <DialogContent aria-describedby={undefined} className="sm:max-w-4xl max-h-[90dvh] overflow-hidden flex flex-col rounded-[24px] p-0 border-zinc-200 shadow-2xl bg-zinc-50">
+           <div className="px-6 py-5 border-b border-zinc-200 bg-white shrink-0 z-10 flex justify-between items-center">
+              <div>
+                <DialogTitle className="text-lg font-bold tracking-tight text-zinc-900">
+                  {editingTemplate?.id === 'new' ? 'Create New Recipe' : 'Edit Recipe'}
+                </DialogTitle>
+                <p className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest mt-1">Strict Sequence Configuration</p>
+              </div>
            </div>
-           <div className="p-6 space-y-5">
-              <div className="space-y-1.5">
+           
+           <div className="p-6 overflow-y-auto flex-1 space-y-6">
+              <div className="space-y-1.5 bg-white p-5 rounded-2xl border border-zinc-200 shadow-sm">
                 <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Recipe Name</Label>
                 <Input 
                   value={editingTemplate?.template_name || ''} 
                   onChange={(e) => setEditingTemplate(prev => prev ? { ...prev, template_name: e.target.value } : null)}
-                  className="h-12 rounded-xl border-zinc-200 shadow-sm font-semibold focus-visible:ring-zinc-900"
-                  placeholder="e.g. Special Saoji Mix"
+                  className="h-12 rounded-xl border-zinc-200 shadow-inner font-bold focus-visible:ring-zinc-900 bg-zinc-50"
+                  placeholder="e.g. Special Malvani Mix"
                 />
               </div>
 
               <div className="space-y-3">
-                <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Ingredients (For 1 KG Base)</Label>
+                <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider pl-1">Strict Bill Sequence Quantities (Per KG)</Label>
                 
-                <select defaultValue="" onChange={(e) => { if (e.target.value) { addIngredientToTemplate(Number(e.target.value)); e.currentTarget.value = ""; } }} className="h-12 w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 text-sm font-semibold text-zinc-600 outline-none shadow-sm focus-visible:ring-1 focus-visible:ring-zinc-900">
-                  <option value="">+ Select raw spice to add...</option>
-                  {items.filter(i => (i as any).item_type === 'RAW_MATERIAL').map((raw) => (<option key={raw.id} value={raw.id}>{getSafeItemName(raw)}</option>))}
-                </select>
-
-                <div className="border border-zinc-200/80 rounded-xl p-2 bg-zinc-50 max-h-[40vh] overflow-y-auto space-y-2 shadow-inner">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                    {tempIngredients.length === 0 ? (
-                      <p className="text-xs text-center text-zinc-400 py-8 font-semibold">No spices added to this mix.</p>
+                      <p className="text-xs text-center text-zinc-400 py-8 font-semibold col-span-full">No spices available in DB.</p>
                    ) : (
                       tempIngredients.map((ing) => (
-                        <div key={ing.item_id} className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-white p-2 shadow-sm">
-                          <div className="min-w-0 flex-1 pl-1"><p className="truncate text-sm font-semibold text-zinc-900">{ing.item_name}</p></div>
-                          <Input type="number" step="0.001" value={ing.qty} onChange={(e) => {
-                             updateCustomIngredient(ing.item_id, Number(e.target.value));
-                          }} className="h-10 w-24 rounded-lg border-zinc-200 text-center font-bold text-sm shadow-none focus-visible:ring-1 focus-visible:ring-zinc-900" />
-                          <span className="text-xs font-bold text-zinc-400 w-6">{ing.unit}</span>
-                          <button onClick={() => removeIngredientFromTemplate(ing.item_id)} className="flex h-10 w-10 items-center justify-center rounded-lg text-zinc-400 hover:text-rose-500 hover:bg-rose-50 transition-colors"><Trash2 className="h-4 w-4" /></button>
+                        <div key={ing.item_id} className="flex items-center justify-between rounded-2xl border border-zinc-200 bg-white p-2.5 shadow-sm hover:border-zinc-300 transition-colors">
+                          <div className="min-w-0 flex-1 pl-2">
+                            <p className="truncate text-sm font-bold text-zinc-900">{ing.item_name}</p>
+                          </div>
+                          <div className="flex items-center gap-1.5 bg-zinc-50 rounded-xl p-1 border border-zinc-100">
+                            <Input 
+                              type="number" 
+                              step="0.001" 
+                              inputMode="decimal"
+                              value={ing.qty} 
+                              onChange={(e) => updateCustomIngredient(ing.item_id, Number(e.target.value))} 
+                              className="h-10 w-[72px] rounded-lg border-zinc-200 text-center font-bold text-[15px] shadow-inner focus-visible:ring-1 focus-visible:ring-emerald-500 bg-white" 
+                            />
+                            <span className="text-[11px] font-bold text-zinc-500 w-5">{ing.unit}</span>
+                          </div>
                         </div>
                       ))
                    )}
                 </div>
               </div>
            </div>
-           <DialogFooter className="border-t border-zinc-100 bg-zinc-50/50 p-5 gap-3 sm:gap-0">
+           
+           <DialogFooter className="border-t border-zinc-200 bg-white p-5 shrink-0 gap-3 sm:gap-0">
               <Button variant="outline" onClick={() => setEditingTemplate(null)} className="h-12 rounded-xl font-bold border-zinc-200 bg-white w-full sm:w-auto text-zinc-700">Cancel</Button>
-              <Button onClick={saveTemplate} disabled={isSubmittingTemplate} className="h-12 rounded-xl bg-zinc-900 hover:bg-zinc-800 font-bold text-white shadow-sm w-full sm:w-auto">
-                {isSubmittingTemplate ? 'Saving...' : 'Save Recipe'}
+              <Button onClick={saveTemplate} disabled={isSubmittingTemplate} className="h-12 rounded-xl bg-emerald-600 hover:bg-emerald-700 font-bold text-white shadow-sm w-full sm:w-auto active:scale-95 transition-transform">
+                {isSubmittingTemplate ? 'Saving Configuration...' : 'Save Strict Recipe'}
               </Button>
            </DialogFooter>
         </DialogContent>
@@ -826,10 +833,10 @@ export default function ManageInventory() {
 
       {/* IMAGE PREVIEW MODAL */}
       <Dialog open={!!previewImage} onOpenChange={(open) => !open && setPreviewImage(null)}>
-        <DialogContent className="sm:max-w-md p-2 bg-transparent border-0 shadow-none">
+        <DialogContent aria-describedby={undefined} className="sm:max-w-md p-2 bg-transparent border-0 shadow-none">
            {previewImage && (
-              <div className="relative rounded-2xl overflow-hidden bg-zinc-900/50 backdrop-blur-md">
-                 <img src={previewImage} alt="Product preview" className="w-full h-auto object-contain max-h-[80vh] rounded-2xl" />
+              <div className="relative rounded-[24px] overflow-hidden bg-zinc-900/50 backdrop-blur-md shadow-2xl border border-white/10">
+                 <img src={previewImage} alt="Product preview" className="w-full h-auto object-contain max-h-[80vh] rounded-[24px]" />
               </div>
            )}
         </DialogContent>
@@ -837,20 +844,18 @@ export default function ManageInventory() {
 
       {/* EDIT ITEM MODAL */}
       <Dialog open={!!editingItem} onOpenChange={(open) => !open && setEditingItem(null)}>
-        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto rounded-3xl p-0 border-zinc-200 shadow-2xl">
-          <div className="px-6 py-5 border-b border-zinc-100 bg-zinc-50/50 sticky top-0 z-10 backdrop-blur-md">
-            <DialogTitle className="text-lg font-semibold tracking-tight text-zinc-900">Edit {editingItem?.item_name}</DialogTitle>
-            <DialogDescription className="text-xs font-medium text-zinc-500 mt-1">
-              Refine properties and stock details for {editingItem?.item_code}
-            </DialogDescription>
+        <DialogContent aria-describedby={undefined} className="sm:max-w-md max-h-[90dvh] overflow-y-auto rounded-[24px] p-0 border-zinc-200 shadow-2xl bg-zinc-50">
+          <div className="px-6 py-5 border-b border-zinc-200 bg-white sticky top-0 z-10">
+            <DialogTitle className="text-lg font-bold tracking-tight text-zinc-900">Edit {editingItem?.item_name}</DialogTitle>
+            <p className="text-xs font-semibold text-zinc-500 mt-1">Refine properties and stock details for {editingItem?.item_code}</p>
           </div>
           
-          <form onSubmit={handleSubmit(handleUpdate)} className="space-y-6 p-6 pt-4 bg-white">
+          <form onSubmit={handleSubmit(handleUpdate)} className="space-y-6 p-6 pt-4">
             
             {/* IMAGE EDIT SECTION */}
             {String((editingItem as any)?.item_type) !== "SERVICE" && (
-              <div className="flex items-center gap-4 p-4 border border-zinc-200 rounded-2xl bg-zinc-50 shadow-sm">
-                 <div className="h-16 w-16 rounded-xl border border-zinc-200 overflow-hidden bg-white flex items-center justify-center shrink-0 shadow-sm">
+              <div className="flex items-center gap-4 p-4 border border-zinc-200 rounded-2xl bg-white shadow-sm">
+                 <div className="h-16 w-16 rounded-xl border border-zinc-200 overflow-hidden bg-zinc-50 flex items-center justify-center shrink-0 shadow-inner">
                     {editImagePreview ? (
                        <img src={editImagePreview} alt="Preview" className="h-full w-full object-cover" />
                     ) : (
@@ -875,8 +880,8 @@ export default function ManageInventory() {
             <div className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="item_name" className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Item Name</Label>
-                <Input id="item_name" className="h-12 rounded-xl border-zinc-200 shadow-sm focus-visible:ring-zinc-900 font-semibold" {...register("item_name")} />
-                {errors.item_name && <p className="text-xs font-medium text-rose-500">{errors.item_name.message}</p>}
+                <Input id="item_name" className="h-12 rounded-xl border-zinc-200 shadow-inner bg-white focus-visible:ring-zinc-900 font-bold" {...register("item_name")} />
+                {errors.item_name && <p className="text-xs font-semibold text-rose-500">{errors.item_name.message}</p>}
               </div>
 
               {String((editingItem as any)?.item_type) !== "SERVICE" && (
@@ -885,7 +890,7 @@ export default function ManageInventory() {
                   <Input 
                     id="size" 
                     placeholder="e.g. 1 kg, 500 g, Large" 
-                    className="h-12 rounded-xl border-zinc-200 bg-white font-semibold text-sm shadow-sm focus-visible:ring-zinc-900" 
+                    className="h-12 rounded-xl border-zinc-200 bg-white font-bold text-sm shadow-inner focus-visible:ring-zinc-900" 
                     {...register("size")} 
                   />
                 </div>
@@ -895,22 +900,22 @@ export default function ManageInventory() {
                 {String((editingItem as any)?.item_type) !== "SERVICE" && (
                   <div className="space-y-1.5">
                     <Label htmlFor="purchase_price" className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Buy Price (₹)</Label>
-                    <Input id="purchase_price" type="number" className="h-12 rounded-xl border-zinc-200 shadow-sm focus-visible:ring-zinc-900 font-semibold" {...register("purchase_price")} />
+                    <Input id="purchase_price" type="number" inputMode="decimal" className="h-12 rounded-xl border-zinc-200 shadow-inner bg-white focus-visible:ring-zinc-900 font-bold" {...register("purchase_price")} />
                   </div>
                 )}
                 <div className={`space-y-1.5 ${String((editingItem as any)?.item_type) === "SERVICE" ? "col-span-2" : ""}`}>
                   <Label htmlFor="selling_price" className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Sell Rate (₹)</Label>
                   <div className="relative">
-                    <Input id="selling_price" type="number" className="h-12 rounded-xl border-emerald-200 bg-emerald-50 text-emerald-800 shadow-inner focus-visible:ring-emerald-500 font-bold" {...register("selling_price")} />
+                    <Input id="selling_price" type="number" inputMode="decimal" className="h-12 rounded-xl border-emerald-200 bg-emerald-50 text-emerald-800 shadow-inner focus-visible:ring-emerald-500 font-bold" {...register("selling_price")} />
                     <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-emerald-600/50">per {(editingItem as any)?.base_unit || 'unit'}</span>
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center justify-between border border-zinc-200 p-4 rounded-2xl bg-zinc-50 shadow-sm">
+              <div className="flex items-center justify-between border border-zinc-200 p-4 rounded-2xl bg-white shadow-sm">
                 <div className="space-y-0.5 flex flex-col">
                     <Label className="text-sm font-bold text-zinc-900 flex items-center gap-2"><Globe className="h-4 w-4 text-zinc-500"/> Website Catalog</Label>
-                    <span className="text-[11px] font-medium text-zinc-500">Show on public storefront</span>
+                    <span className="text-[11px] font-semibold text-zinc-500">Show on public storefront</span>
                 </div>
                 <Switch 
                   checked={watchedShowOnWeb}
@@ -921,10 +926,10 @@ export default function ManageInventory() {
 
               {String((editingItem as any)?.item_type) !== "SERVICE" && (
                 <>
-                  <div className="flex items-center justify-between border border-zinc-200 p-4 rounded-2xl bg-zinc-50 shadow-sm">
+                  <div className="flex items-center justify-between border border-zinc-200 p-4 rounded-2xl bg-white shadow-sm">
                     <div className="space-y-0.5 flex flex-col">
                         <Label className="text-sm font-bold text-zinc-900 flex items-center gap-2"><Package className="h-4 w-4 text-zinc-500"/> Bulk Pack Setup</Label>
-                        <span className="text-[11px] font-medium text-zinc-500">Track inventory in master boxes</span>
+                        <span className="text-[11px] font-semibold text-zinc-500">Track inventory in master boxes</span>
                     </div>
                     <Switch 
                       checked={watchedIsPack}
@@ -944,21 +949,21 @@ export default function ManageInventory() {
                           <div className="grid grid-cols-2 gap-4">
                               <div className="space-y-1.5">
                                 <Label htmlFor="pieces_per_box" className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Units per Pack</Label>
-                                <Input id="pieces_per_box" type="number" className="h-12 rounded-xl border-zinc-200 focus-visible:ring-zinc-900 font-semibold" {...register("pieces_per_box")} />
+                                <Input id="pieces_per_box" type="number" inputMode="numeric" className="h-12 rounded-xl border-zinc-200 shadow-inner focus-visible:ring-zinc-900 font-bold" {...register("pieces_per_box")} />
                               </div>
                               <div className="space-y-1.5">
                                 <Label htmlFor="number_of_boxes" className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Total Packs</Label>
-                                <Input id="number_of_boxes" type="number" className="h-12 rounded-xl border-zinc-200 focus-visible:ring-zinc-900 font-semibold" {...register("number_of_boxes")} />
+                                <Input id="number_of_boxes" type="number" inputMode="numeric" className="h-12 rounded-xl border-zinc-200 shadow-inner focus-visible:ring-zinc-900 font-bold" {...register("number_of_boxes")} />
                               </div>
                           </div>
-                          <div className="text-xs font-bold text-zinc-700 bg-zinc-50 p-3 rounded-xl border border-zinc-200/80 text-center">
+                          <div className="text-xs font-bold text-zinc-700 bg-zinc-50 p-3 rounded-xl border border-zinc-200 text-center shadow-inner">
                              Total Inventory: {watchedBoxes || 0} packs × {watchedPieces || 1} units = <span className="text-zinc-900">{watchedIsPack && watchedBoxes ? (watchedBoxes * (watchedPieces || 1)) : 0} units</span>
                           </div>
                       </div>
                   ) : (
                       <div className="space-y-1.5">
                         <Label htmlFor="quantity" className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Total Stock Quantity ({(editingItem as any)?.base_unit || 'units'})</Label>
-                        <Input id="quantity" type="number" className="h-12 rounded-xl border-zinc-200 shadow-sm focus-visible:ring-zinc-900 font-bold text-xl text-zinc-900" {...register("quantity")} />
+                        <Input id="quantity" type="number" inputMode="decimal" className="h-12 rounded-xl border-zinc-200 shadow-inner focus-visible:ring-zinc-900 font-bold text-xl text-zinc-900 bg-white" {...register("quantity")} />
                       </div>
                   )}
                   {watchedIsPack && <input type="hidden" {...register("quantity")} />}
@@ -966,9 +971,9 @@ export default function ManageInventory() {
               )}
             </div>
 
-            <div className="flex flex-col sm:flex-row gap-3 pt-6 border-t border-zinc-100 px-6 pb-6 bg-zinc-50/50 rounded-b-3xl mt-4">
-              <Button type="button" variant="outline" className="h-12 rounded-xl font-bold border-zinc-200 text-zinc-700 w-full sm:w-auto bg-white" onClick={() => setEditingItem(null)}>Cancel</Button>
-              <Button type="submit" disabled={isSubmitting} className="h-12 rounded-xl font-bold bg-zinc-900 text-white w-full shadow-sm hover:bg-zinc-800">
+            <div className="flex flex-col sm:flex-row gap-3 pt-6 mt-4 border-t border-zinc-200">
+              <Button type="button" variant="outline" className="h-12 rounded-xl font-bold border-zinc-200 text-zinc-700 w-full sm:w-auto bg-white shadow-sm" onClick={() => setEditingItem(null)}>Cancel</Button>
+              <Button type="submit" disabled={isSubmitting} className="h-12 rounded-xl font-bold bg-zinc-900 text-white w-full shadow-md hover:bg-zinc-800 active:scale-95 transition-transform">
                   {isSubmitting ? "Saving Data..." : "Confirm Changes"}
               </Button>
             </div>
@@ -978,13 +983,13 @@ export default function ManageInventory() {
 
       {/* DELETE CONFIRMATION */}
       <AlertDialog open={!!deletingItem} onOpenChange={(open) => !open && setDeletingItem(null)}>
-        <AlertDialogContent className="rounded-3xl border-zinc-200 shadow-2xl p-0 overflow-hidden sm:max-w-sm">
+        <AlertDialogContent className="rounded-[24px] border-zinc-200 shadow-2xl p-0 overflow-hidden sm:max-w-sm">
           <div className="p-6 bg-white">
             <div className="w-12 h-12 rounded-full bg-rose-50 border border-rose-100 flex items-center justify-center mb-4">
               <Trash2 className="h-5 w-5 text-rose-500" />
             </div>
             <AlertDialogTitle className="text-lg font-bold text-zinc-900 mb-1">Delete Item</AlertDialogTitle>
-            <AlertDialogDescription className="font-medium text-zinc-500 text-sm">
+            <AlertDialogDescription className="font-semibold text-zinc-500 text-sm mt-2">
               This will permanently remove <span className="font-bold text-zinc-800">{deletingItem?.item_name}</span> from the topology. This action cannot be undone.
             </AlertDialogDescription>
           </div>

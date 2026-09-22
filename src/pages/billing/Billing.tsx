@@ -3,7 +3,7 @@ import { Html5Qrcode } from "html5-qrcode";
 import {
   Camera, Search, X, ShoppingCart, ScanLine, Minus, Plus, Trash2,
   UserRound, Phone, ChevronRight, CreditCard, Banknote, Package, Scale, 
-  FlaskConical, CheckCircle2, RotateCcw, Edit3, Receipt, Mic, ArrowLeft, ChevronDown, Printer, MessageCircle
+  FlaskConical, CheckCircle2, RotateCcw, Edit3, Receipt, Mic, ArrowLeft, ChevronDown, Printer, MessageCircle, Delete
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -87,26 +87,27 @@ const getSafeItemName = (item: Item) => item.item_name || "Unnamed Item";
 
 const normalizeUnitStr = (str: string) => String(str || "").toLowerCase().trim();
 
-// BULLETPROOF NORMALIZATION: Prevents the 10 Lakh bill bug forever.
+// BULLETPROOF NORMALIZATION
 const getNormalizedQtyForCost = (qty: number, displayUnit: string, dbBaseUnit: string) => {
   const u = normalizeUnitStr(displayUnit);
   const bu = normalizeUnitStr(dbBaseUnit);
   
   if (u === 'piece' || u === 'nug' || u === 'pcs' || bu === 'piece') return qty;
-
-  if ((u === 'g' || u === 'gm' || u === 'gram' || u === 'grams') && (bu === 'kg' || bu === 'kilogram' || bu === 'kilograms')) {
-    return qty / 1000;
-  }
-  
-  if ((u === 'ml') && (bu === 'l' || bu === 'ltr' || bu === 'liter' || bu === 'liters')) {
-    return qty / 1000;
-  }
-  
-  // Safe Fallback: If unit matching failed but number is > 10 and DB expects kg, it's definitely grams.
-  if (qty >= 10 && bu.includes('kg')) return qty / 1000;
-
+  if ((u === 'g' || u === 'gm' || u === 'gram' || u === 'grams') && (bu === 'kg' || bu === 'kilogram' || bu === 'kilograms')) return qty / 1000;
+  if ((u === 'ml') && (bu === 'l' || bu === 'ltr' || bu === 'liter' || bu === 'liters')) return qty / 1000;
+  if (qty >= 10 && bu.includes('kg')) return qty / 1000; // Fallback
   return qty;
 };
+
+// TRADITIONAL MASALA SEQUENCE
+// EXACT SEQUENCE BASED ON JMM PHYSICAL BILL BOOK
+const MASALA_SEQUENCE = [
+  "बेडगी", "लवंगी", "काश्मिरी", "मिरची", "धणे", "हळकुंड", "मिरी", "बडीशेप", 
+  "खसखस", "लवंग", "दालचिनी", "लालफुल", "चक्रिफुल", "मसाला वेलची", "दगडफुल", 
+  "तेजपान", "शहाजिरे", "जायफळ", "जायपत्री", "त्रिफळ", "नागकेशर", "कबाब चिनी",
+  "हिंग", "मेथी", "राई", "जिरा", "पिंपळी", "सुंठ", "हिरवी वेलची", "गुलाब पाकळी", 
+  "कसुरी मेथी", "ओवा", "खोबरा", "लसूण", "मीठ", "तेल"
+];
 
 const StockBadge = ({ item }: { item: Item }) => {
   const quantity = Number((item as any).quantity || 0);
@@ -121,6 +122,32 @@ const StockBadge = ({ item }: { item: Item }) => {
   );
 };
 
+// --- PREMIUM POS NUMPAD COMPONENT (Eliminates iOS Keyboard) ---
+// --- PREMIUM POS NUMPAD COMPONENT (Eliminates iOS Keyboard) ---
+// --- PREMIUM POS NUMPAD COMPONENT (Eliminates iOS Keyboard) ---
+const PosNumpad = ({ value, onChange, allowDecimal = true }: { value: string, onChange: (v: string)=>void, allowDecimal?: boolean }) => {
+  const handlePress = (key: string) => {
+    if (key === 'DEL') onChange(value.slice(0, -1));
+    else if (key === '.' && (!allowDecimal || value.includes('.'))) return;
+    else onChange(value + key);
+  };
+  const keys = ['1','2','3','4','5','6','7','8','9','.', '0','DEL'];
+  if (!allowDecimal) keys[9] = '00'; 
+
+  return (
+    <div className="grid grid-cols-3 gap-2 sm:gap-3 w-full max-w-[320px] mx-auto">
+      {keys.map(k => (
+         <button 
+           key={k} type="button" onClick={() => handlePress(k)}
+           className={`h-14 sm:h-16 rounded-2xl text-2xl font-bold shadow-sm flex items-center justify-center transition-all active:scale-95 ${k === 'DEL' ? 'bg-rose-50 text-rose-500 border border-rose-100 hover:bg-rose-100' : 'bg-white border border-zinc-200/80 text-zinc-800 hover:bg-zinc-50 hover:border-zinc-300'}`}
+         >
+           {k === 'DEL' ? <Delete className="h-6 w-6"/> : k}
+         </button>
+      ))}
+    </div>
+  );
+};
+
 const EmptyCart = () => (
   <div className="flex h-full min-h-[250px] flex-col items-center justify-center px-6 text-center">
     <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-zinc-50 border border-zinc-100">
@@ -131,7 +158,7 @@ const EmptyCart = () => (
   </div>
 );
 
-const SwipeToCheckout = ({ cartCount, total, onCheckout }: { cartCount: number, total: number, onCheckout: () => void }) => {
+const SwipeAction = ({ label, onSwipe, disabled = false, cartCount = 0, variant = 'default' }: { label: string | React.ReactNode, onSwipe: () => void, disabled?: boolean, cartCount?: number, variant?: 'default' | 'success' }) => {
   const [dragProgress, setDragProgress] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const startXRef = useRef(0);
@@ -139,35 +166,39 @@ const SwipeToCheckout = ({ cartCount, total, onCheckout }: { cartCount: number, 
 
   const getMaxDrag = () => {
     if (!containerRef.current) return 250;
-    return containerRef.current.offsetWidth - 60; 
+    return containerRef.current.offsetWidth - 64; 
   };
 
   const handleStart = (clientX: number) => {
+    if (disabled) return;
     setIsDragging(true);
     startXRef.current = clientX - (dragProgress * getMaxDrag());
   };
 
   const handleMove = (clientX: number) => {
-    if (!isDragging) return;
+    if (!isDragging || disabled) return;
     let newX = clientX - startXRef.current;
     newX = Math.max(0, Math.min(newX, getMaxDrag()));
     setDragProgress(newX / getMaxDrag());
   };
 
   const handleEnd = () => {
+    if (disabled) return;
     setIsDragging(false);
     if (dragProgress > 0.85) {
-      onCheckout();
-      setTimeout(() => setDragProgress(0), 500); 
+      onSwipe();
+      setTimeout(() => setDragProgress(0), 400); 
     } else {
       setDragProgress(0);
     }
   };
 
+  const isSuccess = variant === 'success';
+
   return (
     <div 
       ref={containerRef}
-      className="relative h-[60px] bg-zinc-900 rounded-full flex items-center overflow-hidden shadow-2xl select-none touch-none border border-zinc-800"
+      className={`relative h-[64px] rounded-[24px] flex items-center overflow-hidden select-none touch-none border-2 transition-colors ${disabled ? 'bg-zinc-100 border-zinc-200' : (isSuccess ? 'bg-emerald-600 border-emerald-600 shadow-xl shadow-emerald-600/20' : 'bg-zinc-900 border-zinc-900 shadow-xl')}`}
       onMouseLeave={() => isDragging && handleEnd()}
       onMouseUp={() => isDragging && handleEnd()}
       onMouseMove={(e) => isDragging && handleMove(e.clientX)}
@@ -175,26 +206,28 @@ const SwipeToCheckout = ({ cartCount, total, onCheckout }: { cartCount: number, 
       onTouchMove={(e) => isDragging && handleMove(e.touches[0].clientX)}
     >
       <div 
-        className="absolute left-0 top-0 bottom-0 bg-emerald-500 rounded-full"
+        className={`absolute left-0 top-0 bottom-0 rounded-[24px] ${disabled ? 'bg-zinc-200' : (isSuccess ? 'bg-emerald-500' : 'bg-emerald-500')}`}
         style={{ width: `calc(52px + 8px + ${dragProgress * getMaxDrag()}px)`, opacity: dragProgress > 0.05 ? 1 : 0, transition: isDragging ? 'none' : 'width 0.3s ease-out, opacity 0.3s' }} 
       />
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <span className={`text-[13px] font-bold tracking-widest uppercase transition-colors duration-200 z-10 ${dragProgress > 0.4 ? 'text-white' : 'text-zinc-300'}`}>
-          {dragProgress > 0.85 ? 'Release to Pay' : `Swipe to Pay ${formatCurrency(total)}`}
+        <span className={`text-[13px] font-bold tracking-[0.2em] uppercase transition-colors duration-200 z-10 ${dragProgress > 0.4 ? 'text-white' : (disabled ? 'text-zinc-400' : (isSuccess ? 'text-emerald-50' : 'text-zinc-300'))}`}>
+          {dragProgress > 0.85 ? 'Release' : label}
         </span>
       </div>
+      {cartCount > 0 && (
       <div className={`absolute right-4 top-1/2 -translate-y-1/2 transition-opacity duration-200 pointer-events-none z-10 ${dragProgress > 0.1 ? 'opacity-0' : 'opacity-100'}`}>
-         <div className="bg-white/20 text-white text-[11px] font-bold px-2 py-1 rounded-md">
+         <div className="bg-white/20 text-white text-[11px] font-bold px-2.5 py-1.5 rounded-lg">
            {cartCount} {cartCount === 1 ? 'ITEM' : 'ITEMS'}
          </div>
       </div>
+      )}
       <div 
-        className="absolute left-[4px] h-[52px] w-[52px] bg-white rounded-full flex items-center justify-center shadow-md cursor-grab active:cursor-grabbing z-20"
+        className={`absolute left-[4px] h-[52px] w-[52px] bg-white rounded-[20px] flex items-center justify-center shadow-md z-20 ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-grab active:cursor-grabbing'}`}
         style={{ transform: `translateX(${dragProgress * getMaxDrag()}px)`, transition: isDragging ? 'none' : 'transform 0.3s ease-out' }}
         onMouseDown={(e) => handleStart(e.clientX)}
         onTouchStart={(e) => handleStart(e.touches[0].clientX)}
       >
-        <ChevronRight className={`h-6 w-6 text-zinc-900 transition-transform ${dragProgress > 0.85 ? 'rotate-90 text-emerald-600' : ''}`} />
+        <ChevronRight className={`h-6 w-6 transition-transform ${disabled ? 'text-zinc-400' : 'text-zinc-900'} ${dragProgress > 0.85 ? 'rotate-90 text-emerald-600' : ''}`} />
       </div>
     </div>
   );
@@ -229,10 +262,13 @@ export default function Billing() {
   const [paymentAmountInput, setPaymentAmountInput] = useState("");
   const [paymentMethodInput, setPaymentMethodInput] = useState<PaymentMethod>("CASH");
 
-  // UI STATE
-  const [mobileCheckoutOpen, setMobileCheckoutOpen] = useState(false);
-  const [paymentDialogOpen, setPaymentDialogOpen] = useState(false); 
-  const [scannerOpen, setScannerOpen] = useState(false);
+// UI Modals
+const [checkoutOpen, setCheckoutOpen] = useState(false); // Mobile/iPad Full Screen
+const [checkoutStep, setCheckoutStep] = useState(1);
+const [paymentDialogOpen, setPaymentDialogOpen] = useState(false); // Desktop Popup
+const [scannerOpen, setScannerOpen] = useState(false);
+
+  
   
   // Custom Masala States
   const [showCustomMasala, setShowCustomMasala] = useState(false);
@@ -249,13 +285,31 @@ export default function Billing() {
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [completedOrder, setCompletedOrder] = useState<any>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  
+  // SMART WEIGHT STATE
   const [weightDialogOpen, setWeightDialogOpen] = useState(false);
   const [weightedItem, setWeightedItem] = useState<Item | null>(null);
   const [weightInput, setWeightInput] = useState("");
+  const [weightInputMode, setWeightInputMode] = useState<'quick'|'custom'>('quick');
+
+  // Global POS Numpad Dialog State
+  const [numpadConfig, setNumpadConfig] = useState<{isOpen: boolean, title: string, value: string, allowDecimal: boolean, onConfirm: (v: string)=>void}>({ isOpen: false, title: "", value: "", allowDecimal: true, onConfirm: ()=>{} });
 
   const [printType, setPrintType] = useState<"LABEL" | "RECEIPT" | null>(null);
-
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  const hasAutoOpened = useRef(false);
+
+  // SMART GRIDS FOR QUICK WEIGHT
+  const SPICE_WEIGHTS = [
+    { label: '10g', val: 0.01 }, { label: '20g', val: 0.02 }, { label: '25g', val: 0.025 },
+    { label: '50g', val: 0.05 }, { label: '100g', val: 0.1 }, { label: '200g', val: 0.2 },
+    { label: '250g', val: 0.25 }, { label: '500g', val: 0.5 }, { label: '750g', val: 0.75 },
+    { label: '1kg', val: 1 }, { label: '2kg', val: 2 }, { label: '3kg', val: 3 }
+  ];
+
+  const LIQUID_WEIGHTS = [
+    { label: '1L', val: 1 }, { label: '5L', val: 5 }, { label: '10L', val: 10 }, { label: '15L', val: 15 }
+  ];
 
   // Calculations
   const subtotal = useMemo(() => cart.reduce((sum, item) => sum + Number(item.selling_price || 0) * item.cartQuantity, 0), [cart]);
@@ -264,12 +318,20 @@ export default function Billing() {
   const balanceDue = Math.max(0, finalTotal - totalPaid);
 
   useEffect(() => {
-    if (balanceDue > 0 && payments.length === 0) {
-      setPaymentAmountInput(String(balanceDue));
-    } else if (balanceDue === 0) {
-      setPaymentAmountInput("");
-    }
-  }, [balanceDue, mobileCheckoutOpen, paymentDialogOpen]);
+    if (balanceDue > 0 && payments.length === 0) setPaymentAmountInput(String(balanceDue));
+    else if (balanceDue === 0) setPaymentAmountInput("");
+  }, [balanceDue, checkoutOpen, paymentDialogOpen]);
+
+  // --- STRICT SEQUENCE SORTING ---
+  const sortedCustomIngredients = useMemo(() => {
+    return [...tempCustomIngredients].sort((a, b) => {
+      let idxA = MASALA_SEQUENCE.findIndex(seq => a.item_name.includes(seq));
+      let idxB = MASALA_SEQUENCE.findIndex(seq => b.item_name.includes(seq));
+      if (idxA === -1) idxA = 999;
+      if (idxB === -1) idxB = 999;
+      return idxA - idxB;
+    });
+  }, [tempCustomIngredients]);
 
   // --- SMART PRICING ENGINE ---
   const totalMixWeightKg = useMemo(() => {
@@ -301,7 +363,6 @@ export default function Billing() {
     }, 0);
   }, [tempCustomIngredients]);
 
-  // DYNAMIC LABOUR CALCULATION
   const calculatedServicesCharge = useMemo(() => {
     return activeServices.reduce((sum, svc) => sum + (masalaMultiplier * svc.rate), 0);
   }, [activeServices, masalaMultiplier]);
@@ -313,21 +374,7 @@ export default function Billing() {
   }, [materialCost, calculatedServicesCharge, showCustomMasala]);
 
 
-  useEffect(() => {
-    const handlePopState = () => { if (mobileCheckoutOpen) setMobileCheckoutOpen(false); };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, [mobileCheckoutOpen]);
-
-  const openMobileCheckout = () => {
-    setMobileCheckoutOpen(true);
-    window.history.pushState({ modal: 'checkout' }, '', window.location.pathname + '#checkout');
-  };
-
-  const closeMobileCheckout = () => {
-    if (window.location.hash === '#checkout') window.history.back(); 
-    else setMobileCheckoutOpen(false);
-  };
+ 
 
   useEffect(() => {
     const initialize = async () => {
@@ -348,6 +395,23 @@ export default function Billing() {
     };
     initialize();
   }, []);
+
+  // DASHBOARD URL HANDSHAKE
+  useEffect(() => {
+    if (currentTenantId && !hasAutoOpened.current) {
+      const params = new URLSearchParams(location.search);
+      const action = params.get("action");
+      const cat = params.get("category");
+      const search = params.get("search");
+
+      if (cat) setSelectedCategory(cat.replace(/_/g, " "));
+      if (search) setSearchTerm(search);
+      if (action === "yearly_masala") {
+        startCustomMasalaOrder();
+      }
+      hasAutoOpened.current = true;
+    }
+  }, [currentTenantId, location.search]);
 
   const fetchServices = async (tenantId: string) => {
     const { data } = await (supabase as any).from("items").select("*").eq("tenant_id", tenantId).eq("item_type", "SERVICE").order("item_name", { ascending: true });
@@ -414,7 +478,11 @@ export default function Billing() {
     return allItems.filter((item) => {
       const name = getSafeItemName(item).toLowerCase();
       const code = String(item.item_code || "").toLowerCase();
-      const matchesSearch = queryWords.every(word => name.includes(word) || code.includes(word));
+      const englishName = String((item as any).english_name || "").toLowerCase();
+      
+      const matchesSearch = queryWords.every(
+        (word) => name.includes(word) || code.includes(word) || englishName.includes(word)
+      );
       const category = item.category || "OTHER";
       const matchesCategory = selectedCategory === "ALL" || category === selectedCategory;
       return matchesSearch && matchesCategory;
@@ -480,21 +548,19 @@ export default function Billing() {
         setCustomPrice(""); 
         setMasalaMultiplier(1);
         
-        // Auto apply primary labour if exists
-       // Auto apply default services (Labour and Oil)
-       const defaultServices = availableServices
-       .filter(s => 
-         s.item_name.includes("Labour") || s.item_name.includes("मजूरी") || 
-         s.item_name.includes("Oil") || s.item_name.includes("तेल")
-       )
-       .map(svc => ({
-         item_id: svc.id, 
-         item_name: svc.item_name, 
-         rate: Number(svc.selling_price || 0)
-       }));
+        // Auto apply default services (Labour and Oil)
+        const defaultServices = availableServices
+          .filter(s => 
+            s.item_name.includes("Labour") || s.item_name.includes("मजूरी") || 
+            s.item_name.includes("Oil") || s.item_name.includes("तेल")
+          )
+          .map(svc => ({
+            item_id: svc.id, 
+            item_name: svc.item_name, 
+            rate: Number(svc.selling_price || 0)
+          }));
 
-     setActiveServices(defaultServices);
-
+        setActiveServices(defaultServices);
         setShowCustomMasala(true);
       }
     } catch(e) {} finally { setIsProcessing(false); }
@@ -554,11 +620,14 @@ export default function Billing() {
     }]);
   };
 
-  const updateCustomIngredient = (index: number, quantity: number) => {
-    setTempCustomIngredients((prev) => prev.map((ing, i) => i === index ? { ...ing, qty: quantity } : ing));
+  // Uses ItemID instead of Map Index to support dynamic sorting safely
+  const updateCustomIngredient = (itemId: number, quantity: number) => {
+    setTempCustomIngredients((prev) => prev.map((ing) => ing.item_id === itemId ? { ...ing, qty: quantity } : ing));
   };
 
-  const removeCustomIngredient = (index: number) => setTempCustomIngredients((prev) => prev.filter((_, i) => i !== index));
+  const removeCustomIngredient = (itemId: number) => {
+    setTempCustomIngredients((prev) => prev.filter((ing) => ing.item_id !== itemId));
+  };
 
   const saveCustomization = async () => {
     if (!customPrice || Number(customPrice) <= 0) return toast({ title: "Enter a selling price", variant: "destructive" });
@@ -690,7 +759,8 @@ export default function Billing() {
       
       setCart([]); setPayments([]); setCustomerPhone(""); setCustomerName(""); setFoundCustomer(null); setDeliveryDate("");
       setDiscountAmount(0); setSearchTerm(""); setSelectedCategory("ALL"); setQuickQuantity("1");
-      closeMobileCheckout(); 
+      setCheckoutOpen(false); 
+      setCheckoutStep(1);
       setPaymentDialogOpen(false);
       await fetchNextOrderNumber(currentTenantId);
     } catch (error: any) {
@@ -808,8 +878,8 @@ export default function Billing() {
         </div>
 
         {!compact && (
-          <Button disabled={cart.length === 0} onClick={() => setPaymentDialogOpen(true)} className="h-12 w-full rounded-xl bg-zinc-900 text-white font-semibold shadow-sm hover:bg-zinc-800 transition-all">
-            Proceed to Checkout <ChevronRight className="ml-2 h-4 w-4" />
+          <Button disabled={cart.length === 0} onClick={() => setPaymentDialogOpen(true)} className="h-14 w-full rounded-2xl bg-zinc-900 text-white font-bold text-[16px] shadow-sm hover:bg-zinc-800 active:scale-95 transition-all">
+            Proceed to Checkout <ChevronRight className="ml-2 h-5 w-5" />
           </Button>
         )}
       </div>
@@ -833,7 +903,7 @@ export default function Billing() {
                 <Input
                   value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
                   placeholder="Search products or voice search..."
-                  className="h-12 rounded-xl border-zinc-200 bg-zinc-50 pl-11 pr-10 text-sm font-medium shadow-sm focus-visible:ring-1 focus-visible:ring-zinc-900 focus:bg-white transition-colors"
+                  className="h-12 text-[16px] rounded-xl border-zinc-200 bg-zinc-50 pl-11 pr-10 font-medium shadow-sm focus-visible:ring-1 focus-visible:ring-zinc-900 focus:bg-white transition-colors"
                 />
                 <button onClick={startVoiceSearch} className={`absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg transition-colors ${isListening ? 'bg-rose-100 text-rose-600 animate-pulse' : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100'}`}>
                    <Mic className="h-4 w-4" />
@@ -879,7 +949,7 @@ export default function Billing() {
                   <select 
                     value={quickQuantity} 
                     onChange={(e) => setQuickQuantity(e.target.value)}
-                    className="h-11 w-20 rounded-xl border border-zinc-200 bg-white font-bold text-sm text-center shadow-sm focus-visible:ring-2 focus-visible:ring-zinc-900 appearance-none pl-3 pr-6"
+                    className="h-11 w-20 rounded-xl border border-zinc-200 bg-white font-bold text-[16px] text-center shadow-sm focus-visible:ring-2 focus-visible:ring-zinc-900 appearance-none pl-3 pr-6"
                   >
                     <option value="" disabled>Qty</option>
                     {Array.from({ length: 100 }, (_, i) => i + 1).map(num => (
@@ -915,9 +985,12 @@ export default function Billing() {
                           <StockBadge item={item} />
                         </div>
                         <div className="flex-1">
-                          <h3 className="line-clamp-2 text-sm font-semibold leading-tight text-zinc-900">{getSafeItemName(item)}</h3>
-                          <p className="mt-0.5 text-[10px] font-medium text-zinc-400">{item.item_code}</p>
-                        </div>
+  <h3 className="line-clamp-1 text-sm font-semibold leading-tight text-zinc-900">{getSafeItemName(item)}</h3>
+  {(item as any).english_name && (
+    <p className="text-[11px] font-medium text-zinc-500 truncate leading-tight">{(item as any).english_name}</p>
+  )}
+  <p className="mt-0.5 text-[10px] font-medium text-zinc-400">{item.item_code}</p>
+</div>
                         <div className="mt-3 flex items-end justify-between gap-2">
                           <div>
                             <p className="text-base font-semibold tracking-tight text-zinc-900">{formatCurrency(Number(item.selling_price || 0))}</p>
@@ -944,203 +1017,281 @@ export default function Billing() {
           </aside>
         </div>
 
-        {cart.length > 0 && !mobileCheckoutOpen && (
-          <div className="fixed bottom-[80px] left-4 right-4 z-40 lg:hidden animate-in fade-in slide-in-from-bottom-4">
-            <SwipeToCheckout cartCount={cart.length} total={finalTotal} onCheckout={openMobileCheckout} />
+      {/* --- FIXED IPAD BUTTON VISIBILITY --- */}
+      {cart.length > 0 && !checkoutOpen && (
+          <div className="absolute bottom-6 left-0 right-0 mx-auto w-[92%] max-w-[400px] z-40 xl:hidden animate-in fade-in slide-in-from-bottom-4">
+            <SwipeAction cartCount={cart.length} label={`Swipe to Pay ${formatCurrency(finalTotal)}`} onSwipe={() => { setCheckoutStep(1); setCheckoutOpen(true); }} />
           </div>
         )}
-
       </div>
 
-      {/* --- MOBILE CHECKOUT --- */}
-      {mobileCheckoutOpen && (
-        <div className="fixed inset-0 z-[100] bg-zinc-50 flex flex-col animate-in slide-in-from-right-full duration-300 lg:hidden">
-          
-          <div className="h-14 px-4 bg-white border-b border-zinc-200 flex items-center shrink-0 shadow-sm">
-            <button onClick={closeMobileCheckout} className="p-2 -ml-2 text-zinc-600 hover:text-zinc-900 active:bg-zinc-100 rounded-full transition-colors mr-2">
-              <ArrowLeft className="h-5 w-5" />
-            </button>
-            <span className="font-semibold text-lg text-zinc-900">Checkout</span>
+      {/* --- FULL-SCREEN MOBILE/IPAD STEP-WIZARD --- */}
+      {checkoutOpen && (
+        <div className="fixed inset-0 z-[100] bg-zinc-50 flex flex-col animate-in slide-in-from-right-full duration-300 xl:hidden">
+          <div className="h-14 px-4 bg-white border-b border-zinc-200 flex items-center justify-between shrink-0 shadow-sm">
+            <div className="flex items-center gap-3">
+              {checkoutStep > 1 ? (
+                <button onClick={() => setCheckoutStep(p => p - 1)} className="p-2 -ml-2 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 rounded-full transition-colors active:scale-95"><ArrowLeft className="h-5 w-5" /></button>
+              ) : (
+                <button onClick={() => setCheckoutOpen(false)} className="p-2 -ml-2 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 rounded-full transition-colors active:scale-95"><X className="h-5 w-5" /></button>
+              )}
+              <div>
+                <h2 className="text-lg font-bold text-zinc-900 leading-tight">Checkout</h2>
+                <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mt-0.5">Step {checkoutStep} of 5</p>
+              </div>
+            </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4 space-y-6">
-            <div className="bg-white border border-zinc-200 rounded-2xl shadow-sm overflow-hidden">
-               <div className="bg-zinc-50 border-b border-zinc-100 px-4 py-3 flex justify-between items-center">
-                 <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">Items in Ledger</span>
-                 <span className="text-xs font-bold text-zinc-900 bg-white border border-zinc-200 px-2 py-0.5 rounded-md shadow-sm">{cart.length}</span>
-               </div>
-               <div className="max-h-[30vh] overflow-y-auto p-4 space-y-3">
-                 {cart.map(item => (
-                   <div key={item.cartId} className="flex justify-between items-start text-sm pb-2 border-b border-zinc-100 last:border-0 last:pb-0">
-                     <div className="flex-1 pr-2">
-                       <span className="font-semibold text-zinc-800">{getSafeItemName(item)}</span>
-                       <div className="text-[11px] font-medium text-zinc-500 mt-0.5">{item.cartQuantity} x {formatCurrency(item.selling_price)}</div>
-                     </div>
-                     <span className="font-bold text-zinc-900">{formatCurrency(item.cartQuantity * item.selling_price)}</span>
-                   </div>
-                 ))}
-               </div>
-               <div className="bg-zinc-50 border-t border-zinc-100 p-4">
-                 <div className="flex justify-between items-center text-lg">
-                   <span className="font-semibold text-zinc-600">Total</span>
-                   <span className="font-bold text-zinc-900 tracking-tight">{formatCurrency(finalTotal)}</span>
-                 </div>
-               </div>
-            </div>
-
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <Label className="text-[11px] font-semibold text-zinc-500 uppercase ml-1">Order Details</Label>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <Receipt className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                    <Input value={orderNumber} onChange={e => setOrderNumber(e.target.value)} className="h-11 pl-9 rounded-xl border-zinc-200 shadow-sm font-medium text-sm bg-white" placeholder="Order No."/>
+          <div className="flex-1 overflow-y-auto p-4 sm:p-5">
+             {/* STEP 1: REVIEW LEDGER */}
+             {checkoutStep === 1 && (
+               <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
+                  <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-zinc-200 shadow-sm">
+                    <span className="font-bold text-zinc-900 text-[15px]">Review Ledger Items</span>
+                    <span className="text-xs font-bold bg-zinc-100 px-3 py-1.5 rounded-lg text-zinc-700">{cart.length}</span>
                   </div>
-                  <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className="h-11 w-[130px] rounded-xl border-zinc-200 shadow-sm text-xs font-medium bg-white" />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-[11px] font-semibold text-zinc-500 uppercase ml-1">Customer CRM</Label>
-                <div className="relative">
-                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                  <Input value={customerPhone} onChange={e => handlePhoneChange(e.target.value)} placeholder="Phone Number (e.g., 9876543210)" className="h-11 pl-9 rounded-xl border-zinc-200 shadow-sm font-medium text-sm bg-white" />
-                </div>
-                {customerPhone.length >= 10 && (
-                  <div className="relative mt-2 animate-in fade-in slide-in-from-top-2">
-                    <UserRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                    <Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Customer Name" className="h-11 pl-9 rounded-xl border-zinc-200 shadow-sm font-medium text-sm bg-white" />
+                  <div className="bg-white border border-zinc-200 rounded-2xl shadow-sm p-4">
+                    <div className="max-h-[45vh] overflow-y-auto space-y-4 pr-2">
+                      {cart.map(item => (
+                        <div key={item.cartId} className="flex justify-between items-start text-sm pb-4 border-b border-zinc-100 last:border-0 last:pb-0">
+                          <div className="flex-1 pr-3">
+                            <span className="font-bold text-zinc-800 leading-tight block">{getSafeItemName(item)}</span>
+                            <div className="text-[11px] font-bold text-zinc-500 mt-1">{item.cartQuantity} x {formatCurrency(item.selling_price || 0)}</div>
+                          </div>
+                          <span className="font-bold text-zinc-900 text-[15px]">{formatCurrency(item.cartQuantity * Number(item.selling_price || 0))}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                )}
-              </div>
+                  <Button variant="outline" onClick={() => setCheckoutOpen(false)} className="w-full h-14 rounded-2xl font-bold border-dashed border-2 border-zinc-300 text-zinc-600 hover:bg-zinc-50 shadow-none text-[15px]">+ Add More Items</Button>
+               </div>
+             )}
 
-              <div className="space-y-2 bg-zinc-50 border border-zinc-200/80 p-3 rounded-xl shadow-sm">
-                <div className="flex justify-between items-center mb-1">
-                   <Label className="text-[11px] font-semibold text-zinc-500 uppercase ml-1">Split Payment Record</Label>
-                   <span className="text-[11px] font-bold text-zinc-500 bg-white border border-zinc-200 px-2 py-0.5 rounded shadow-sm">Pending: {formatCurrency(balanceDue)}</span>
-                </div>
-                <div className="flex gap-2">
-                  <select value={paymentMethodInput} onChange={(e) => setPaymentMethodInput(e.target.value as PaymentMethod)} className="h-11 w-[90px] rounded-xl border border-zinc-300 bg-white px-2 text-xs font-bold outline-none focus:ring-1 focus:ring-zinc-900 shadow-sm">
-                    <option value="CASH">CASH</option>
-                    <option value="UPI">UPI</option>
-                    <option value="CARD">CARD</option>
-                  </select>
-                  <Input type="number" value={paymentAmountInput} onChange={(e) => setPaymentAmountInput(e.target.value)} placeholder="Amount" className="h-11 flex-1 rounded-xl border-zinc-300 font-bold text-zinc-900 shadow-sm bg-white" />
-                  <Button onClick={addPayment} className="h-11 px-4 rounded-xl bg-zinc-900 text-white font-semibold shadow-sm hover:bg-zinc-800">
-                     {Number(paymentAmountInput) > 0 && Number(paymentAmountInput) < balanceDue ? "Split" : "Add"}
-                  </Button>
-                </div>
-                
-                {balanceDue > 0 && (
-                  <div className="flex gap-2 overflow-x-auto scrollbar-none pt-1">
-                    <button onClick={() => setPaymentAmountInput(String(balanceDue))} className="px-3 py-1.5 bg-white border border-zinc-200 rounded-lg text-[11px] font-bold text-zinc-700 whitespace-nowrap active:scale-95 transition-all shadow-sm">Full Pay</button>
-                    <button onClick={() => setPaymentAmountInput(String(Math.floor(balanceDue / 2)))} className="px-3 py-1.5 bg-white border border-zinc-200 rounded-lg text-[11px] font-bold text-zinc-700 whitespace-nowrap active:scale-95 transition-all shadow-sm">Split 50%</button>
-                    <button onClick={() => { setPayments([]); setPaymentAmountInput(""); }} className="px-3 py-1.5 bg-rose-50 border border-rose-200 rounded-lg text-[11px] font-bold text-rose-700 whitespace-nowrap active:scale-95 transition-all shadow-sm">Zero Advance (Udhaar)</button>
+             {/* STEP 2: ORDER SETTINGS */}
+             {checkoutStep === 2 && (
+               <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
+                  <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Order Settings</Label>
+                  <div className="space-y-5 bg-white p-5 rounded-[24px] border border-zinc-200 shadow-sm">
+                    <div>
+                      <Label className="text-[13px] font-bold text-zinc-800 mb-2 block">Order Number</Label>
+                      <div className="relative">
+                        <Receipt className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                        <Input value={orderNumber} onChange={e => setOrderNumber(e.target.value)} className="h-14 pl-11 text-[16px] rounded-2xl font-bold bg-zinc-50 border-zinc-200 shadow-inner" />
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="text-[13px] font-bold text-zinc-800 mb-2 block">Delivery Schedule</Label>
+                      <div className="flex gap-2">
+                         <button onClick={() => setDeliveryDate("")} className={`flex-1 h-14 rounded-2xl text-[15px] font-bold border transition-all active:scale-95 ${!deliveryDate ? 'bg-zinc-900 text-white border-zinc-900 shadow-md' : 'bg-zinc-50 text-zinc-600 border-zinc-200 shadow-inner'}`}>Instant (Today)</button>
+                         <button onClick={() => setDeliveryDate(new Date().toISOString().split('T')[0])} className={`flex-1 h-14 rounded-2xl text-[15px] font-bold border transition-all active:scale-95 ${deliveryDate ? 'bg-zinc-900 text-white border-zinc-900 shadow-md' : 'bg-zinc-50 text-zinc-600 border-zinc-200 shadow-inner'}`}>Custom Date</button>
+                      </div>
+                      {deliveryDate && (
+                        <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className="h-14 mt-3 rounded-2xl font-bold bg-zinc-50 text-[16px] border-zinc-200 shadow-inner px-4" />
+                      )}
+                    </div>
                   </div>
-                )}
+               </div>
+             )}
 
-                {payments.length > 0 && (
-                  <div className="pt-2 mt-2 border-t border-zinc-200/80 space-y-2">
-                    {payments.map(payment => (
-                      <div key={payment.id} className="flex justify-between items-center text-sm bg-white p-2 rounded-lg border border-zinc-200 shadow-sm">
-                        <span className="font-bold text-zinc-700 text-xs">{payment.method}</span>
-                        <div className="flex items-center gap-3">
-                          <span className="font-bold text-emerald-600">{formatCurrency(payment.amount)}</span>
-                          <button onClick={() => removePayment(payment.id)} className="text-zinc-400 hover:text-rose-500 bg-zinc-50 p-1 rounded-md"><X className="h-3.5 w-3.5" /></button>
+             {/* STEP 3: CUSTOMER CRM */}
+             {checkoutStep === 3 && (
+               <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
+                  <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Customer CRM (Optional)</Label>
+                  <div className="space-y-5 bg-white p-5 rounded-[24px] border border-zinc-200 shadow-sm">
+                    <div>
+                      <Label className="text-[13px] font-bold text-zinc-800 mb-2 block">Phone Number</Label>
+                      <div className="relative">
+                        <Phone className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                        <button onClick={() => setNumpadConfig({isOpen: true, title: "Customer Phone", value: customerPhone, allowDecimal: false, onConfirm: (v) => handlePhoneChange(v)})} className="h-14 w-full pl-11 text-left text-[16px] rounded-2xl font-bold bg-zinc-50 border border-zinc-200 shadow-inner flex items-center hover:bg-zinc-100 transition-colors">
+                           {customerPhone || <span className="text-zinc-400 font-medium">Enter 10-digit number</span>}
+                        </button>
+                      </div>
+                    </div>
+                    {customerPhone.length >= 10 && (
+                      <div className="animate-in fade-in slide-in-from-top-2">
+                        <Label className="text-[13px] font-bold text-zinc-800 mb-2 block">Full Name</Label>
+                        <div className="relative">
+                          <UserRound className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                          <Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Customer Name" className="h-14 pl-11 text-[16px] rounded-2xl font-bold bg-zinc-50 border-zinc-200 shadow-inner" />
                         </div>
                       </div>
-                    ))}
+                    )}
                   </div>
-                )}
-              </div>
-            </div>
+               </div>
+             )}
 
+             {/* STEP 4: PAYMENT SPLIT (Redesigned) */}
+             {checkoutStep === 4 && (
+               <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
+                  <div className="flex justify-between items-center px-1">
+                    <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">Payment Split</Label>
+                    <span className="text-[11px] font-bold text-rose-600 bg-rose-50 border border-rose-100 px-3 py-1.5 rounded-lg shadow-sm">Pending: {formatCurrency(balanceDue)}</span>
+                  </div>
+                  <div className="bg-white p-5 rounded-[24px] border border-zinc-200 shadow-sm space-y-5">
+                    
+                    <div className="space-y-2">
+                      <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Payment Method</Label>
+                      <div className="flex gap-2 p-1 bg-zinc-100/80 border border-zinc-200 rounded-2xl">
+                        {["CASH", "UPI", "CARD"].map(m => (
+                          <button key={m} onClick={() => setPaymentMethodInput(m as PaymentMethod)} className={`flex-1 h-12 rounded-xl text-sm font-bold transition-all ${paymentMethodInput === m ? 'bg-white text-zinc-900 shadow-sm border border-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}>{m}</button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Amount Received</Label>
+                      <div className="flex gap-3">
+                        <button onClick={() => setNumpadConfig({isOpen: true, title: "Payment Amount", value: paymentAmountInput, allowDecimal: true, onConfirm: (v) => setPaymentAmountInput(String(v))})} className="h-14 flex-1 rounded-2xl border border-zinc-200 bg-white text-left px-4 text-[16px] font-bold text-zinc-900 shadow-sm flex items-center hover:bg-zinc-50 transition-colors">
+                          {paymentAmountInput ? `₹ ${paymentAmountInput}` : "Enter Amount"}
+                        </button>
+                        <Button onClick={addPayment} className="h-14 px-6 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[15px] shadow-sm active:scale-95 transition-all">Record</Button>
+                      </div>
+                    </div>
+                    
+                    {balanceDue > 0 && (
+                      <div className="flex gap-2 overflow-x-auto scrollbar-none pt-1">
+                        <button onClick={() => setPaymentAmountInput(String(balanceDue))} className="px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold shadow-sm active:scale-95 text-zinc-700">Full Pay</button>
+                        <button onClick={() => setPaymentAmountInput(String(Math.floor(balanceDue / 2)))} className="px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold shadow-sm active:scale-95 text-zinc-700">Split 50%</button>
+                        <button onClick={() => { setPayments([]); setPaymentAmountInput(""); }} className="px-4 py-3 bg-rose-50 border border-rose-200 rounded-xl text-xs font-bold text-rose-700 shadow-sm active:scale-95">Udhaar (0 Pay)</button>
+                      </div>
+                    )}
+                    
+                    {payments.length > 0 && (
+                      <div className="pt-3 border-t border-zinc-100 space-y-2">
+                        {payments.map(p => (
+                          <div key={p.id} className="flex justify-between items-center bg-zinc-50 p-3.5 rounded-2xl border border-zinc-200 shadow-sm">
+                            <span className="font-bold text-zinc-800 text-[13px]">{p.method}</span>
+                            <div className="flex items-center gap-4">
+                              <span className="font-bold text-emerald-600 text-[15px]">{formatCurrency(p.amount)}</span>
+                              <button onClick={() => removePayment(p.id)} className="text-zinc-400 hover:text-rose-500 hover:bg-white p-2 rounded-xl transition-colors"><Trash2 className="h-4 w-4" /></button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+               </div>
+             )}
+
+             {/* STEP 5: FINAL COMPLETE */}
+             {checkoutStep === 5 && (
+               <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
+                  <div className="text-center bg-white border border-zinc-200 p-8 rounded-[32px] shadow-sm">
+                     <p className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5">Final Amount</p>
+                     <p className="text-5xl font-bold tracking-tight text-zinc-900">{formatCurrency(finalTotal)}</p>
+                     <div className="mt-4 flex justify-center gap-2">
+                       {totalPaid > 0 && <span className="text-[13px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 py-1.5 px-4 rounded-xl shadow-sm">Paid: {formatCurrency(totalPaid)}</span>}
+                       {balanceDue > 0 && <span className="text-[13px] font-bold text-rose-700 bg-rose-50 border border-rose-200 py-1.5 px-4 rounded-xl shadow-sm">Due: {formatCurrency(balanceDue)}</span>}
+                     </div>
+                  </div>
+                  <div className="bg-white border border-zinc-200 rounded-[24px] p-5 text-[15px] font-semibold space-y-3 shadow-sm">
+                     <div className="flex justify-between items-center pb-3 border-b border-zinc-50"><span className="text-zinc-500">Order</span><span className="text-zinc-900 font-bold bg-zinc-50 px-2.5 py-1 rounded-lg border border-zinc-100">{orderNumber}</span></div>
+                     <div className="flex justify-between items-center pb-3 border-b border-zinc-50"><span className="text-zinc-500">Items</span><span className="text-zinc-900 font-bold">{cart.length} Units</span></div>
+                     <div className="flex justify-between items-center pb-3 border-b border-zinc-50"><span className="text-zinc-500">Customer</span><span className="text-zinc-900 font-bold">{customerName || customerPhone || "Walk-in"}</span></div>
+                     <div className="flex justify-between items-center"><span className="text-zinc-500">Delivery</span><span className="text-zinc-900 font-bold">{deliveryDate ? new Date(deliveryDate).toLocaleDateString('en-IN') : 'Instant (Today)'}</span></div>
+                  </div>
+               </div>
+             )}
           </div>
           
-          <div className="p-4 border-t border-zinc-200 bg-white shrink-0 pb-safe">
-            <Button disabled={isProcessing || (balanceDue > 0 && !customerPhone)} onClick={createOrder} className="h-14 w-full rounded-2xl bg-emerald-600 text-base font-semibold text-white shadow-[0_4px_15px_rgba(16,185,129,0.25)] hover:bg-emerald-700 active:scale-[0.98] transition-transform">
-              {isProcessing ? "Processing..." : balanceDue > 0 ? `Save Order — ${formatCurrency(balanceDue)} Due` : "Complete Transaction"}
-            </Button>
+          <div className="p-4 sm:p-5 border-t border-zinc-200 bg-white shrink-0 pb-safe shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
+             <div className="max-w-[500px] mx-auto">
+               {checkoutStep === 1 && <SwipeAction label="Swipe to Confirm Ledger" onSwipe={() => setCheckoutStep(2)} />}
+               {checkoutStep === 2 && <SwipeAction label="Swipe to Confirm Details" onSwipe={() => setCheckoutStep(3)} />}
+               {checkoutStep === 3 && <SwipeAction label="Swipe to Confirm CRM" onSwipe={() => setCheckoutStep(4)} />}
+               {checkoutStep === 4 && <SwipeAction label="Swipe to Review Payment" disabled={balanceDue > 0 && !customerPhone} onSwipe={() => setCheckoutStep(5)} />}
+               
+               {/* GREEN THEMED FINAL SWIPE */}
+               {checkoutStep === 5 && <SwipeAction variant="success" label={isProcessing ? "Processing..." : "Swipe to Complete Order"} disabled={isProcessing} onSwipe={createOrder} />}
+               
+               {checkoutStep === 4 && balanceDue > 0 && !customerPhone && (
+                 <p className="text-[10px] text-center text-rose-500 font-bold mt-3 uppercase tracking-widest">Customer phone required for pending balance</p>
+               )}
+             </div>
           </div>
         </div>
       )}
 
-      {/* --- DESKTOP ONLY PAYMENT DIALOG --- */}
+      {/* --- DESKTOP-ONLY QUICK PAYMENT DIALOG --- */}
       <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
-        <DialogContent className="sm:max-w-md rounded-2xl p-0 overflow-hidden bg-white shadow-2xl border-zinc-200">
-          <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4 bg-zinc-50/50">
+        <DialogContent aria-describedby={undefined} className="sm:max-w-md w-[95vw] rounded-[32px] p-0 overflow-hidden bg-white shadow-2xl border-zinc-200 flex flex-col max-h-[90dvh]">
+          <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4 bg-zinc-50/50 shrink-0">
             <div>
-              <DialogTitle className="text-base font-semibold text-zinc-900">Order Checkout</DialogTitle>
-              <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">Review & Pay</p>
+              <DialogTitle className="text-base font-bold text-zinc-900">Order Checkout</DialogTitle>
+              <p className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider mt-0.5">Review & Pay</p>
             </div>
           </div>
 
-          <div className="p-5 overflow-y-auto max-h-[80vh]">
-            <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm text-center mb-6">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">Amount Due</p>
-              <p className="text-3xl font-semibold tracking-tight text-zinc-900">{formatCurrency(balanceDue)}</p>
-              {totalPaid > 0 && <p className="text-xs font-medium text-emerald-600 mt-2">Paid: {formatCurrency(totalPaid)}</p>}
+          <div className="flex-1 overflow-y-auto p-5">
+            <div className="rounded-[24px] border border-zinc-200 bg-zinc-50 p-6 shadow-inner text-center mb-6">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-2">Amount Due</p>
+              <p className="text-4xl font-bold tracking-tight text-zinc-900">{formatCurrency(balanceDue)}</p>
+              {totalPaid > 0 && <p className="text-xs font-bold text-emerald-600 mt-2 bg-emerald-50 inline-block px-3 py-1 rounded-lg">Paid: {formatCurrency(totalPaid)}</p>}
             </div>
 
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <Label className="text-[11px] font-semibold text-zinc-500 uppercase ml-1">Order Details</Label>
+            <div className="space-y-5">
+              <div className="space-y-2">
+                <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Order Details</Label>
                 <div className="flex gap-2">
                   <div className="relative flex-1">
-                    <Receipt className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                    <Input value={orderNumber} onChange={e => setOrderNumber(e.target.value)} className="h-11 pl-9 rounded-xl border-zinc-200 shadow-sm font-medium text-sm bg-white" placeholder="Order No."/>
+                    <Receipt className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                    <Input value={orderNumber} onChange={e => setOrderNumber(e.target.value)} className="h-12 pl-11 text-[16px] rounded-xl border-zinc-200 shadow-sm font-bold bg-white" placeholder="Order No."/>
                   </div>
-                  <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className="h-11 w-[130px] rounded-xl border-zinc-200 shadow-sm text-xs font-medium bg-white" />
+                  <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className="h-12 w-[130px] rounded-xl border-zinc-200 shadow-sm text-[16px] font-bold bg-white" />
                 </div>
               </div>
 
-              <div className="space-y-1.5">
-                <Label className="text-[11px] font-semibold text-zinc-500 uppercase ml-1">Customer CRM</Label>
+              <div className="space-y-2">
+                <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Customer CRM</Label>
                 <div className="relative">
-                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                  <Input value={customerPhone} onChange={e => handlePhoneChange(e.target.value)} placeholder="Phone Number (e.g., 9876543210)" className="h-11 pl-9 rounded-xl border-zinc-200 shadow-sm font-medium text-sm bg-white" />
+                  <Phone className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                  <button onClick={() => setNumpadConfig({isOpen: true, title: "Customer Phone", value: customerPhone, allowDecimal: false, onConfirm: (v) => handlePhoneChange(v)})} className="h-12 w-full pl-11 text-left text-[16px] rounded-xl font-bold bg-white border border-zinc-200 shadow-sm flex items-center hover:bg-zinc-50">
+                    {customerPhone || <span className="text-zinc-400 font-medium">Enter 10-digit number</span>}
+                  </button>
                 </div>
                 {customerPhone.length >= 10 && (
                   <div className="relative mt-2 animate-in fade-in slide-in-from-top-2">
-                    <UserRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                    <Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Customer Name" className="h-11 pl-9 rounded-xl border-zinc-200 shadow-sm font-medium text-sm bg-white" />
+                    <UserRound className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                    <Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Customer Name" className="h-12 pl-11 text-[16px] rounded-xl border-zinc-200 shadow-sm font-bold bg-white" />
                   </div>
                 )}
               </div>
 
-              <div className="space-y-2 bg-zinc-50 border border-zinc-200/80 p-3 rounded-xl shadow-sm">
+              <div className="space-y-3 bg-zinc-50 border border-zinc-200 p-4 rounded-[24px] shadow-inner">
                 <div className="flex justify-between items-center mb-1">
-                   <Label className="text-[11px] font-semibold text-zinc-500 uppercase ml-1">Split Payment Record</Label>
-                   <span className="text-[11px] font-bold text-zinc-500 bg-white border border-zinc-200 px-2 py-0.5 rounded shadow-sm">Pending: {formatCurrency(balanceDue)}</span>
+                   <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Split Payment Record</Label>
                 </div>
-                <div className="flex gap-2">
-                  <select value={paymentMethodInput} onChange={(e) => setPaymentMethodInput(e.target.value as PaymentMethod)} className="h-11 w-[90px] rounded-xl border border-zinc-300 bg-white px-2 text-xs font-bold outline-none focus:ring-1 focus:ring-zinc-900 shadow-sm">
-                    <option value="CASH">CASH</option>
-                    <option value="UPI">UPI</option>
-                    <option value="CARD">CARD</option>
-                  </select>
-                  <Input type="number" value={paymentAmountInput} onChange={(e) => setPaymentAmountInput(e.target.value)} placeholder="Amount" className="h-11 flex-1 rounded-xl border-zinc-300 font-bold text-zinc-900 shadow-sm bg-white" />
-                  <Button onClick={addPayment} className="h-11 px-4 rounded-xl bg-zinc-900 text-white font-semibold shadow-sm hover:bg-zinc-800">
-                     {Number(paymentAmountInput) > 0 && Number(paymentAmountInput) < balanceDue ? "Split" : "Add"}
-                  </Button>
+                
+                {/* Redesigned Desktop Split Payment Area */}
+                <div className="flex gap-2 p-1 bg-white border border-zinc-200 rounded-xl mb-2 shadow-sm">
+                  {["CASH", "UPI", "CARD"].map(m => (
+                    <button key={m} onClick={() => setPaymentMethodInput(m as PaymentMethod)} className={`flex-1 h-10 rounded-lg text-xs font-bold transition-all ${paymentMethodInput === m ? 'bg-zinc-900 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>{m}</button>
+                  ))}
+                </div>
+
+                <div className="flex gap-3">
+                  <button onClick={() => setNumpadConfig({isOpen: true, title: "Payment Amount", value: paymentAmountInput, allowDecimal: true, onConfirm: (v) => setPaymentAmountInput(String(v))})} className="h-12 flex-1 rounded-xl border border-zinc-200 bg-white text-left px-3 text-[16px] font-bold text-zinc-900 shadow-sm flex items-center hover:bg-zinc-50">
+                    {paymentAmountInput ? `₹ ${paymentAmountInput}` : "Enter Amount"}
+                  </button>
+                  <Button onClick={addPayment} className="h-12 px-6 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-sm active:scale-95">Record</Button>
                 </div>
                 
                 {balanceDue > 0 && (
                   <div className="flex gap-2 overflow-x-auto scrollbar-none pt-1">
-                    <button onClick={() => setPaymentAmountInput(String(balanceDue))} className="px-3 py-1.5 bg-white border border-zinc-200 rounded-lg text-[11px] font-bold text-zinc-700 whitespace-nowrap active:scale-95 transition-all shadow-sm">Full Pay</button>
-                    <button onClick={() => setPaymentAmountInput(String(Math.floor(balanceDue / 2)))} className="px-3 py-1.5 bg-white border border-zinc-200 rounded-lg text-[11px] font-bold text-zinc-700 whitespace-nowrap active:scale-95 transition-all shadow-sm">Split 50%</button>
-                    <button onClick={() => { setPayments([]); setPaymentAmountInput(""); }} className="px-3 py-1.5 bg-rose-50 border border-rose-200 rounded-lg text-[11px] font-bold text-rose-700 whitespace-nowrap active:scale-95 transition-all shadow-sm">Zero Advance (Udhaar)</button>
+                    <button onClick={() => setPaymentAmountInput(String(balanceDue))} className="px-3 py-2 bg-white border border-zinc-200 rounded-lg text-xs font-bold shadow-sm active:scale-95">Full Pay</button>
+                    <button onClick={() => setPaymentAmountInput(String(Math.floor(balanceDue / 2)))} className="px-3 py-2 bg-white border border-zinc-200 rounded-lg text-xs font-bold shadow-sm active:scale-95">Split 50%</button>
+                    <button onClick={() => { setPayments([]); setPaymentAmountInput(""); }} className="px-3 py-2 bg-rose-50 border border-rose-200 rounded-lg text-xs font-bold text-rose-700 shadow-sm active:scale-95">Udhaar (0 Pay)</button>
                   </div>
                 )}
 
                 {payments.length > 0 && (
                   <div className="pt-2 mt-2 border-t border-zinc-200/80 space-y-2">
-                    {payments.map(payment => (
-                      <div key={payment.id} className="flex justify-between items-center text-sm bg-white p-2 rounded-lg border border-zinc-200 shadow-sm">
-                        <span className="font-bold text-zinc-700 text-xs">{payment.method}</span>
+                    {payments.map(p => (
+                      <div key={p.id} className="flex justify-between items-center bg-white p-3 rounded-xl border border-zinc-200 shadow-sm">
+                        <span className="font-bold text-zinc-700 text-xs">{p.method}</span>
                         <div className="flex items-center gap-3">
-                          <span className="font-bold text-emerald-600">{formatCurrency(payment.amount)}</span>
-                          <button onClick={() => removePayment(payment.id)} className="text-zinc-400 hover:text-rose-500 bg-zinc-50 p-1 rounded-md"><X className="h-3.5 w-3.5" /></button>
+                          <span className="font-bold text-emerald-600 text-[14px]">{formatCurrency(p.amount)}</span>
+                          <button onClick={() => removePayment(p.id)} className="text-zinc-400 hover:text-rose-500 hover:bg-rose-50 p-1.5 rounded-lg transition-colors"><X className="h-4 w-4" /></button>
                         </div>
                       </div>
                     ))}
@@ -1148,177 +1299,185 @@ export default function Billing() {
                 )}
               </div>
             </div>
-
-            <Button disabled={isProcessing || (balanceDue > 0 && !customerPhone)} onClick={createOrder} className="mt-8 h-12 w-full rounded-xl bg-zinc-900 text-sm font-semibold text-white shadow-sm hover:bg-zinc-800 active:scale-[0.98] transition-transform">
+          </div>
+          
+          <div className="p-5 border-t border-zinc-100 bg-white shrink-0">
+            <Button disabled={isProcessing || (balanceDue > 0 && !customerPhone)} onClick={createOrder} className="h-14 w-full rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-[16px] font-bold text-white shadow-[0_4px_15px_rgba(16,185,129,0.25)] active:scale-[0.98] transition-transform">
               {isProcessing ? "Processing..." : balanceDue > 0 ? `Save Order — ${formatCurrency(balanceDue)} Due` : "Complete Transaction"}
             </Button>
           </div>
         </DialogContent>
       </Dialog>
-
-      {/* WEIGHT DIALOG */}
-      <Dialog open={weightDialogOpen} onOpenChange={setWeightDialogOpen}>
-        <DialogContent className="max-w-sm rounded-3xl p-6">
-          <DialogHeader>
-            <DialogTitle className="text-lg font-semibold text-zinc-900">Enter Quantity</DialogTitle>
-            <p className="text-xs font-medium text-zinc-500">{weightedItem ? getSafeItemName(weightedItem) : ""}</p>
-          </DialogHeader>
-          <div className="py-2 space-y-3">
-            <Label className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Weight ({weightedItem ? getItemDisplayUnit(weightedItem) : "kg"})</Label>
-            <Input autoFocus type="number" step="0.001" inputMode="decimal" value={weightInput} onChange={(e) => setWeightInput(e.target.value)} placeholder="0.00" className="h-14 rounded-2xl text-center text-2xl font-semibold border-zinc-200 focus-visible:ring-1 focus-visible:ring-zinc-900 shadow-sm" />
-            <div className="grid grid-cols-4 gap-2 mt-4">
-              {[0.25, 0.5, 1, 2].map((value) => (
-                <button key={value} onClick={() => setWeightInput(String(value))} className="rounded-xl border border-zinc-200 bg-zinc-50 py-3 text-sm font-semibold text-zinc-700 hover:bg-white hover:border-zinc-300 transition-colors shadow-sm">{value}</button>
-              ))}
+      
+      {/* GLOBAL POS NUMPAD OVERLAY (Custom Z-Index 120 to stay above Checkout Drawer) */}
+      {numpadConfig.isOpen && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-zinc-950/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="sm:max-w-[380px] w-[95vw] rounded-[32px] p-6 shadow-2xl border border-zinc-200 bg-white animate-in zoom-in-95 duration-200">
+            <div className="text-center text-lg font-bold text-zinc-900 mb-4">{numpadConfig.title}</div>
+            <div className="flex flex-col items-center">
+              <div className="h-20 w-full bg-zinc-50 border border-zinc-200/80 rounded-2xl mb-6 flex items-center justify-center shadow-inner">
+                <span className="text-4xl font-bold text-zinc-900 tracking-tight">{numpadConfig.value || "0"}</span>
+              </div>
+              <PosNumpad value={numpadConfig.value} onChange={(v) => setNumpadConfig(p => ({...p, value: v}))} allowDecimal={numpadConfig.allowDecimal} />
+            </div>
+            <div className="grid grid-cols-2 gap-3 w-full mt-6">
+              <Button variant="outline" className="h-14 rounded-2xl w-full border-zinc-200 font-bold text-[16px]" onClick={() => setNumpadConfig(p => ({...p, isOpen: false}))}>Cancel</Button>
+              <Button className="h-14 rounded-2xl w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-[16px]" onClick={() => { numpadConfig.onConfirm(numpadConfig.value); setNumpadConfig(p => ({...p, isOpen: false})); }}>Confirm</Button>
             </div>
           </div>
-          <DialogFooter className="mt-4">
-            <Button variant="outline" onClick={() => setWeightDialogOpen(false)} className="h-12 rounded-xl font-semibold border-zinc-200">Cancel</Button>
-            <Button onClick={confirmWeightedItem} className="h-12 rounded-xl bg-zinc-900 font-semibold text-white">Confirm Addition</Button>
+        </div>
+      )}
+
+      {/* SMART WEIGHT KEYPAD DIALOG */}
+      <Dialog open={weightDialogOpen} onOpenChange={setWeightDialogOpen}>
+        <DialogContent aria-describedby={undefined} className="sm:max-w-md w-[95vw] rounded-3xl p-6 flex flex-col max-h-[90dvh]">
+          <DialogHeader className="shrink-0 flex flex-row items-center justify-between">
+            <div><DialogTitle className="text-lg font-semibold text-zinc-900">Select Weight</DialogTitle><p className="text-xs text-zinc-500">{weightedItem ? getSafeItemName(weightedItem) : ""}</p></div>
+            <span className="text-lg font-bold text-zinc-400">{weightedItem ? getItemDisplayUnit(weightedItem) : "kg"}</span>
+          </DialogHeader>
+
+          <div className="py-2 flex-1 overflow-y-auto">
+            <div className="flex bg-zinc-100 p-1.5 rounded-2xl mb-4 shrink-0">
+              <button onClick={() => setWeightInputMode('quick')} className={`flex-1 py-2.5 text-sm font-bold rounded-xl transition-all ${weightInputMode === 'quick' ? 'bg-white shadow-sm text-zinc-900' : 'text-zinc-500'}`}>Quick Select</button>
+              <button onClick={() => setWeightInputMode('custom')} className={`flex-1 py-2.5 text-sm font-bold rounded-xl transition-all ${weightInputMode === 'custom' ? 'bg-white shadow-sm text-zinc-900' : 'text-zinc-500'}`}>Manual Numpad</button>
+            </div>
+
+            {weightInputMode === 'quick' ? (
+              <div className="space-y-4">
+                <div className="text-center bg-zinc-50 border border-zinc-200/80 shadow-inner rounded-2xl py-6">
+                   <span className="text-4xl font-bold text-zinc-900 tracking-tight">{weightInput || "0"}</span>
+                </div>
+                <div className="grid grid-cols-4 gap-2">
+                  {(weightedItem && ['litre', 'ml', 'l'].includes(String((weightedItem as any).base_unit).toLowerCase()) ? LIQUID_WEIGHTS : SPICE_WEIGHTS).map((btn) => (
+                    <button key={btn.label} onClick={() => setWeightInput(String(btn.val))} className={`py-4 rounded-xl text-sm font-bold transition-colors ${weightInput === String(btn.val) ? 'bg-zinc-900 text-white shadow-md border border-zinc-900' : 'bg-white border border-zinc-200 text-zinc-700 shadow-sm active:scale-95'}`}>
+                      {btn.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center">
+                <div className="text-center w-full bg-zinc-50 border border-zinc-200/80 shadow-inner rounded-2xl py-6 mb-6">
+                   <span className="text-4xl font-bold text-zinc-900 tracking-tight">{weightInput || "0"}</span>
+                </div>
+                <PosNumpad value={weightInput} onChange={setWeightInput} />
+              </div>
+            )}
+          </div>
+          <DialogFooter className="mt-4 shrink-0 grid grid-cols-2 gap-3">
+            <Button variant="outline" onClick={() => setWeightDialogOpen(false)} className="h-14 rounded-2xl font-bold border-zinc-200 w-full text-[16px]">Cancel</Button>
+            <Button onClick={confirmWeightedItem} className="h-14 rounded-2xl bg-emerald-500 text-white font-bold w-full text-[16px]">Add to Cart</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* YEARLY MASALA MODAL */}
       <Dialog open={showCustomMasala} onOpenChange={setShowCustomMasala}>
-        <DialogContent className="max-w-md rounded-2xl p-0 overflow-hidden bg-white shadow-2xl">
-          <DialogHeader className="border-b border-zinc-100 px-5 py-4 bg-zinc-50/50">
+        <DialogContent aria-describedby={undefined} className="sm:max-w-md w-[95vw] rounded-2xl p-0 overflow-hidden bg-white shadow-2xl flex flex-col max-h-[90dvh]">
+          <DialogHeader className="border-b border-zinc-100 px-5 py-4 bg-zinc-50/50 shrink-0">
             <DialogTitle className="text-base font-semibold text-zinc-900">{customizingCartId ? "Edit Yearly Masala" : "Yearly Masala (Varshbharache)"}</DialogTitle>
-            <p className="text-[11px] font-medium text-zinc-500 mt-1">Select a template or mix raw spices manually.</p>
           </DialogHeader>
           
-          <div className="p-5 space-y-5 overflow-y-auto max-h-[70vh]">
-            
-            <div className="flex gap-3">
-               <div className="flex-1 space-y-1.5">
+          <div className="flex-1 overflow-y-auto p-5 space-y-5">
+            <div className="space-y-4 border-b border-zinc-100 pb-5">
+               <div className="space-y-1.5">
                  <Label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">1. Base Recipe</Label>
-                 <select value={selectedTemplateId} onChange={(e) => applyTemplate(e.target.value)} className="h-12 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-900 outline-none focus:ring-1 focus:ring-zinc-900 shadow-sm">
+                 <select value={selectedTemplateId} onChange={(e) => applyTemplate(e.target.value)} className="h-12 w-full rounded-xl border border-zinc-200 bg-white px-3 font-semibold text-zinc-900 shadow-sm">
                    <option value="">No Template Selected</option>
                    {masalaTemplates.map((t) => (<option key={t.id} value={t.id}>{t.template_name}</option>))}
                  </select>
                </div>
-               <div className="w-28 space-y-1.5">
-                 <Label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">Multiplier</Label>
-                 <div className="flex items-center rounded-xl border border-zinc-200 bg-white h-12 shadow-sm overflow-hidden">
-                    <button type="button" onClick={() => handleMultiplierChange(String(Math.max(1, masalaMultiplier - 1)))} className="h-full w-8 flex items-center justify-center text-zinc-500 hover:bg-zinc-50"><Minus className="h-3 w-3" /></button>
-                    <input 
-                      type="number" 
-                      min="1" 
-                      step="1" 
-                      value={masalaMultiplier} 
-                      onChange={(e) => handleMultiplierChange(e.target.value)} 
-                      className="h-full flex-1 text-center font-bold text-sm bg-transparent outline-none appearance-none m-0 p-0" 
-                    />
-                    <button type="button" onClick={() => handleMultiplierChange(String(masalaMultiplier + 1))} className="h-full w-8 flex items-center justify-center text-zinc-500 hover:bg-zinc-50"><Plus className="h-3 w-3" /></button>
+
+               {/* iOS STYLE HORIZONTAL BATCH SELECTOR */}
+               <div className="space-y-2">
+                 <Label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">Batch Multiplier</Label>
+                 <div className="flex items-center gap-2">
+                   <div className="flex-1 overflow-x-auto scrollbar-none flex gap-2 snap-x snap-mandatory py-2 px-1">
+                      {[1,2,3,4,5,10,12,15,20,25,30,50].map(num => (
+                         <button key={num} onClick={() => setMasalaMultiplier(num)} className={`shrink-0 snap-center h-12 w-12 rounded-[14px] flex items-center justify-center text-lg font-bold transition-all ${masalaMultiplier === num ? 'bg-emerald-500 text-white shadow-lg scale-110' : 'bg-white border border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`}>
+                           {num}
+                         </button>
+                      ))}
+                   </div>
+                   <button onClick={() => setNumpadConfig({isOpen: true, title: "Batch Multiplier", value: String(masalaMultiplier), allowDecimal: false, onConfirm: (v) => setMasalaMultiplier(Number(v))})} className="shrink-0 h-12 px-4 rounded-[14px] border border-zinc-200 bg-zinc-900 text-white font-bold text-sm shadow-sm active:scale-95">
+                     Custom
+                   </button>
                  </div>
                </div>
             </div>
             
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <Label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">2. Configure Ingredients</Label>
-              </div>
-              <select defaultValue="" onChange={(e) => { if (e.target.value) { addCustomIngredient(Number(e.target.value)); e.currentTarget.value = ""; } }} className="h-11 w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 text-xs font-semibold text-zinc-600 outline-none shadow-sm">
+              <Label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">2. Configure Ingredients</Label>
+              <select defaultValue="" onChange={(e) => { if (e.target.value) { addCustomIngredient(Number(e.target.value)); e.currentTarget.value = ""; } }} className="h-11 w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 font-semibold text-zinc-600 shadow-sm">
                 <option value="">+ Add raw spice material...</option>
                 {rawMaterials.map((raw) => (<option key={raw.id} value={raw.id}>{getSafeItemName(raw)}</option>))}
               </select>
               
               <div className="mt-2 space-y-1.5 border border-zinc-100 rounded-xl p-2 bg-zinc-50/50 max-h-[30vh] overflow-y-auto">
-                {tempCustomIngredients.length === 0 ? (
-                  <p className="text-xs text-center text-zinc-400 py-6 font-medium">No ingredients added yet.</p>
-                ) : (
-                  tempCustomIngredients.map((ing, idx) => (
-                    <div key={`${ing.item_id}-${idx}`} className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white p-1.5 shadow-sm">
-                      <div className="min-w-0 flex-1 pl-2"><p className="truncate text-xs font-semibold text-zinc-900">{ing.item_name}</p></div>
-                      <Input type="number" step="0.001" value={ing.qty} onChange={(e) => updateCustomIngredient(idx, Number(e.target.value))} className="h-9 w-20 rounded-md border-zinc-200 text-center font-semibold text-xs shadow-none focus-visible:ring-1 focus-visible:ring-zinc-900" />
-                      <span className="text-[10px] font-medium text-zinc-400 w-5">{ing.unit}</span>
-                      <button onClick={() => removeCustomIngredient(idx)} className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 hover:text-rose-500 hover:bg-rose-50 transition-colors"><Trash2 className="h-3.5 w-3.5" /></button>
-                    </div>
-                  ))
-                )}
+                {sortedCustomIngredients.map((ing, idx) => (
+                  <div key={`${ing.item_id}-${idx}`} className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white p-1.5 shadow-sm">
+                    <div className="min-w-0 flex-1 pl-2"><p className="truncate text-xs font-semibold text-zinc-900">{ing.item_name}</p></div>
+                    <button onClick={() => setNumpadConfig({isOpen: true, title: `Edit ${ing.item_name}`, value: String(ing.qty), allowDecimal: true, onConfirm: (v) => setTempCustomIngredients(p => p.map(i => i.item_id === ing.item_id ? { ...i, qty: Number(v) } : i))})} className="h-9 w-20 rounded-md border border-zinc-200 bg-white text-center font-bold text-[16px] shadow-sm flex items-center justify-center active:bg-zinc-100 text-zinc-900">
+                      {ing.qty}
+                    </button>
+                    <span className="text-[10px] font-medium text-zinc-400 w-5">{ing.unit}</span>
+                    <button onClick={() => setTempCustomIngredients(p => p.filter(i => i.item_id !== ing.item_id))} className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 hover:text-rose-500 hover:bg-rose-50"><Trash2 className="h-3.5 w-3.5" /></button>
+                  </div>
+                ))}
               </div>
             </div>
 
-            {/* FULLY DYNAMIC SERVICES BREAKDOWN */}
             <div className="space-y-3 pt-4 border-t border-zinc-100">
-              <div className="flex justify-between items-center text-xs font-semibold text-zinc-600">
-                <span>Raw Material Cost</span>
-                <span>{formatCurrency(materialCost)}</span>
-              </div>
-              
+              <div className="flex justify-between text-xs font-semibold text-zinc-600"><span>Raw Material Cost</span><span>{formatCurrency(materialCost)}</span></div>
               <div className="space-y-2 pt-2 border-t border-zinc-100">
                 <Label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">3. Applied Services</Label>
-                
                 {availableServices.map(svc => {
                   const isActive = activeServices.find(a => a.item_id === svc.id);
                   return (
                     <div key={svc.id} className="flex justify-between items-center text-xs font-semibold text-zinc-600">
                       <div className="flex items-center gap-2">
-                        <Switch 
-                          checked={!!isActive} 
-                          onCheckedChange={(checked) => {
-                            if (checked) {
-                              setActiveServices(prev => [...prev, { item_id: svc.id, item_name: svc.item_name, rate: Number(svc.selling_price || 0) }]);
-                            } else {
-                              setActiveServices(prev => prev.filter(a => a.item_id !== svc.id));
-                            }
-                          }} 
-                          className="scale-75 data-[state=checked]:bg-zinc-900" 
-                        />
+                        <Switch checked={!!isActive} onCheckedChange={(checked) => { if (checked) setActiveServices(prev => [...prev, { item_id: svc.id, item_name: svc.item_name, rate: Number(svc.selling_price || 0) }]); else setActiveServices(prev => prev.filter(a => a.item_id !== svc.id)); }} className="scale-75 data-[state=checked]:bg-zinc-900" />
                         <span>{svc.item_name}</span>
-                        {isActive && <span className="text-[10px] bg-zinc-100 px-1.5 py-0.5 rounded text-zinc-500">{masalaMultiplier} batch × ₹{isActive.rate}</span>}
                       </div>
                       {isActive && (
-                        <div className="flex items-center gap-2">
-                          <Input 
-                            type="number" 
-                            value={isActive.rate} 
-                            onChange={(e) => {
-                              const newRate = Number(e.target.value);
-                              setActiveServices(prev => prev.map(a => a.item_id === svc.id ? { ...a, rate: newRate } : a));
-                            }} 
-                            className="h-7 w-16 text-xs px-2 text-right border-zinc-200" 
-                          />
-                          <span className="w-16 text-right">{formatCurrency(masalaMultiplier * isActive.rate)}</span>
-                        </div>
+                        <button onClick={() => setNumpadConfig({isOpen: true, title: `Edit ${svc.item_name} Rate`, value: String(isActive.rate), allowDecimal: true, onConfirm: (v) => setActiveServices(p => p.map(a => a.item_id === svc.id ? { ...a, rate: Number(v) } : a))})} className="h-7 px-3 border border-zinc-200 rounded-md bg-white font-bold shadow-sm flex items-center justify-center text-zinc-900">
+                          ₹{isActive.rate}
+                        </button>
                       )}
                     </div>
                   );
                 })}
               </div>
-
               <div className="flex justify-between items-center pt-2 border-t border-zinc-100">
                 <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Final Selling Price (₹)</Label>
-                <span className="text-[10px] text-zinc-400 font-medium">Auto-calculated</span>
               </div>
-              <Input type="number" value={customPrice} onChange={(e) => setCustomPrice(e.target.value ? Number(e.target.value) : "")} className="h-14 rounded-xl border-emerald-200 bg-emerald-50 text-2xl font-bold text-emerald-700 focus-visible:ring-1 focus-visible:ring-emerald-500 shadow-inner text-right" />
+              <button onClick={() => setNumpadConfig({isOpen: true, title: "Selling Price", value: String(customPrice), allowDecimal: true, onConfirm: (v) => setCustomPrice(Number(v))})} className="w-full h-14 rounded-xl border border-emerald-200 bg-emerald-50 text-2xl font-bold text-emerald-700 shadow-inner flex items-center justify-end px-4">
+                {customPrice || "0"}
+              </button>
             </div>
-
           </div>
-          
-          <DialogFooter className="border-t border-zinc-100 bg-zinc-50/50 p-4">
-            <Button variant="outline" onClick={() => setShowCustomMasala(false)} className="h-12 rounded-xl font-semibold border-zinc-200 bg-white">Cancel</Button>
-            <Button onClick={saveCustomization} className="h-12 rounded-xl bg-zinc-900 font-semibold text-white shadow-sm hover:bg-zinc-800">Save to Ledger</Button>
+          <DialogFooter className="border-t border-zinc-100 bg-zinc-50/50 p-4 shrink-0 grid grid-cols-2 gap-3">
+            <Button variant="outline" onClick={() => setShowCustomMasala(false)} className="h-12 rounded-xl font-bold w-full text-[15px]">Cancel</Button>
+            <Button onClick={saveCustomization} className="h-12 rounded-xl bg-zinc-900 text-white font-bold w-full text-[15px]">Save to Ledger</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* SCANNER DIALOG */}
-      <Dialog open={scannerOpen} onOpenChange={setScannerOpen}>
-        <DialogContent className="max-w-sm overflow-hidden rounded-3xl p-0">
-          <DialogHeader className="border-b border-zinc-100 px-5 py-4 bg-zinc-50/50">
+{/* SCANNER DIALOG */}
+<Dialog open={scannerOpen} onOpenChange={setScannerOpen}>
+        <DialogContent aria-describedby={undefined} className="sm:max-w-md w-[95vw] overflow-hidden rounded-3xl p-0 flex flex-col max-h-[90dvh]">
+          <DialogHeader className="border-b border-zinc-100 px-5 py-4 bg-zinc-50/50 shrink-0">
             <DialogTitle className="flex items-center gap-2 text-base font-semibold text-zinc-900"><Camera className="h-4 w-4" /> Scan Barcode</DialogTitle>
           </DialogHeader>
-          <div className="bg-black p-2"><div id="billing-scanner" className="min-h-[300px] overflow-hidden rounded-2xl" /></div>
-          <div className="p-4"><Button variant="outline" onClick={() => setScannerOpen(false)} className="h-12 w-full rounded-xl font-semibold border-zinc-200 shadow-sm">Close Scanner</Button></div>
+          <div className="bg-black p-2 flex-1"><div id="billing-scanner" className="min-h-[300px] overflow-hidden rounded-2xl" /></div>
+          <div className="p-4 shrink-0"><Button variant="outline" onClick={() => setScannerOpen(false)} className="h-12 w-full rounded-xl font-semibold border-zinc-200 shadow-sm">Close Scanner</Button></div>
         </DialogContent>
       </Dialog>
 
       {/* SUCCESS MODAL WITH PRINT & WHATSAPP */}
       <Dialog open={showSuccessModal} onOpenChange={setShowSuccessModal}>
-        <DialogContent className="max-w-sm rounded-3xl p-6 text-center border-zinc-200 shadow-2xl bg-white">
+        <DialogContent aria-describedby={undefined} className="sm:max-w-md w-[95vw] rounded-3xl p-6 text-center border-zinc-200 shadow-2xl bg-white mb-auto mt-20 sm:m-auto">
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50 border border-emerald-100 mb-4"><CheckCircle2 className="h-8 w-8 text-emerald-500" /></div>
-          <h2 className="text-xl font-bold tracking-tight text-zinc-900">Transaction Complete</h2>
+          <DialogTitle className="text-xl font-bold tracking-tight text-zinc-900">Transaction Complete</DialogTitle>
           
           <div className="mt-5 rounded-2xl border border-zinc-100 bg-zinc-50 p-5 shadow-inner">
             <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">Amount Recorded</p>
@@ -1418,7 +1577,16 @@ export default function Billing() {
                   );
                 }
                 
-                return item.customIngredients.filter(ing => ing.qty > 0).map((ing, iIdx) => {
+                // Ensure print matches strict UI sorting
+                const sortedPrintIng = [...item.customIngredients].sort((a, b) => {
+                  let idxA = MASALA_SEQUENCE.findIndex(seq => a.item_name.includes(seq));
+                  let idxB = MASALA_SEQUENCE.findIndex(seq => b.item_name.includes(seq));
+                  if (idxA === -1) idxA = 999;
+                  if (idxB === -1) idxB = 999;
+                  return idxA - idxB;
+                });
+
+                return sortedPrintIng.filter(ing => ing.qty > 0).map((ing, iIdx) => {
                   const normalizedQty = getNormalizedQtyForCost(ing.qty, ing.unit, ing.base_unit);
                   const cost = normalizedQty * (ing.price_per_unit || 0);
 

@@ -7,7 +7,6 @@ import { HashRouter, Routes, Route, useLocation, useNavigate } from "react-route
 import { App as CapacitorApp } from "@capacitor/app";
 import { StatusBar, Style } from "@capacitor/status-bar";
 
-
 // Import the Bouncer
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 
@@ -27,6 +26,7 @@ import SuperAdmin from "./pages/admin/SuperAdmin";
 import CRM from "./pages/crm/crm";
 import Production from "./pages/production/Production";
 import MixMasala from "./pages/mixmasala/MixMasala";
+import ManageUsers from "@/pages/admin/ManageUsers"; // Added Staff Management
 
 const queryClient = new QueryClient();
 
@@ -50,7 +50,7 @@ const AppRoutes = () => {
       const backListener = await CapacitorApp.addListener('backButton', ({ canGoBack }) => {
         const currentPath = location.pathname;
 
-        if (currentPath === "/" || currentPath === "/dashboard" || currentPath === "/billing") {
+        if (currentPath === "/" || currentPath === "/dashboard" || currentPath === "/billing" || currentPath === "/login") {
           const now = Date.now();
           if (now - lastBackPressTime.current < 2000) {
             CapacitorApp.exitApp();
@@ -80,72 +80,83 @@ const AppRoutes = () => {
     <Routes>
       {/* PUBLIC ROUTES */}
       <Route path="/" element={<Login />} />
+      <Route path="/login" element={<Login />} />
       <Route path="/invoice/:id" element={<InvoiceView />} />
       <Route path="/super-admin-secret" element={<SuperAdmin />} />
       
-      {/* SHARED ROUTES (Admins, Managers, and Sales) */}
+      {/* PROTECTED ROUTES */}
       <Route path="/dashboard" element={
-        <ProtectedRoute allowedRoles={['admin', 'manager', 'sales']}>
+        <ProtectedRoute>
           <Index />
         </ProtectedRoute>
       } />
+      
       <Route path="/billing" element={
-        <ProtectedRoute allowedRoles={['admin', 'manager', 'sales']}>
+        <ProtectedRoute>
           <Billing />
         </ProtectedRoute>
       } />
+      
       <Route path="/settings" element={
-        <ProtectedRoute allowedRoles={['admin', 'manager', 'sales']}>
+        <ProtectedRoute>
           <Settings />
         </ProtectedRoute>
       } />
 
-<Route path="/mixmasala" element={
-        <ProtectedRoute allowedRoles={['admin', 'manager', 'sales']}>
+      <Route path="/mixmasala" element={
+        <ProtectedRoute>
           <MixMasala />
         </ProtectedRoute>
       } />
 
-
-      {/* RESTRICTED ROUTES (Admins and Managers Only) */}
       <Route path="/inventory/add" element={
-        <ProtectedRoute allowedRoles={['admin', 'manager']}>
+        <ProtectedRoute>
           <AddInventory />
         </ProtectedRoute>
       } />
 
       <Route path="/production" element={
-        <ProtectedRoute allowedRoles={['admin', 'manager']}>
+        <ProtectedRoute>
           <Production />
         </ProtectedRoute>
       } />
+      
       <Route path="/analytics" element={
-        <ProtectedRoute allowedRoles={['admin', 'manager']}>
+        <ProtectedRoute>
           <Analytics />
         </ProtectedRoute>
       } />
+      
       <Route path="/manage" element={
-        <ProtectedRoute allowedRoles={['admin', 'manager']}>
+        <ProtectedRoute>
           <Manage />
         </ProtectedRoute>
       } />
+      
       <Route path="/udhaar" element={
-        <ProtectedRoute allowedRoles={['admin', 'manager']}>
+        <ProtectedRoute>
           <Udhaar />
         </ProtectedRoute>
       } />
+      
       <Route path="/sales" element={
-        <ProtectedRoute allowedRoles={['admin', 'manager']}>
+        <ProtectedRoute>
           <Sales />
         </ProtectedRoute>
       } />
 
-<Route path="/crm" element={
-  <ProtectedRoute allowedRoles={['admin', 'manager']}>
-    <CRM />
-  </ProtectedRoute>
-} />
+      <Route path="/crm" element={
+        <ProtectedRoute>
+          <CRM />
+        </ProtectedRoute>
+      } />
 
+      {/* NEW: ADMIN STAFF MANAGEMENT */}
+      <Route path="/manage-users" element={
+        <ProtectedRoute>
+          <ManageUsers />
+        </ProtectedRoute>
+      } />
 
       {/* Catch-all */}
       <Route path="*" element={<NotFound />} />

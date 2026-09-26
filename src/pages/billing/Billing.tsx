@@ -3,7 +3,7 @@ import { Html5Qrcode } from "html5-qrcode";
 import {
   Camera, Search, X, ShoppingCart, ScanLine, Minus, Plus, Trash2,
   UserRound, Phone, ChevronRight, CreditCard, Banknote, Package, Scale, 
-  FlaskConical, CheckCircle2, RotateCcw, Edit3, Receipt, Mic, ArrowLeft, ChevronDown, Printer, MessageCircle, Delete
+  FlaskConical, CheckCircle2, RotateCcw, Edit3, Receipt, Mic, ArrowLeft, ChevronDown, Printer, MessageCircle, Delete, NotebookPen, MapPin
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -31,7 +31,8 @@ type PaymentEntry = {
 type CustomIngredient = {
   item_id: number;
   item_name: string;
-  qty: number;
+  qty: number;      
+  base_qty: number; 
   unit: string;
   price_per_unit: number; 
   base_unit: string;      
@@ -57,6 +58,7 @@ type Customer = {
   full_name: string | null;
   phone_number: string | null;
   customer_type: string | null;
+  address?: string | null;
 };
 
 type MasalaTemplate = {
@@ -88,7 +90,6 @@ const getSafeItemName = (item: Item) => item.item_name || "Unnamed Item";
 
 const normalizeUnitStr = (str: string) => String(str || "").toLowerCase().trim();
 
-// BULLETPROOF NORMALIZATION
 const getNormalizedQtyForCost = (qty: number, displayUnit: string, dbBaseUnit: string) => {
   const u = normalizeUnitStr(displayUnit);
   const bu = normalizeUnitStr(dbBaseUnit);
@@ -96,18 +97,50 @@ const getNormalizedQtyForCost = (qty: number, displayUnit: string, dbBaseUnit: s
   if (u === 'piece' || u === 'nug' || u === 'pcs' || bu === 'piece') return qty;
   if ((u === 'g' || u === 'gm' || u === 'gram' || u === 'grams') && (bu === 'kg' || bu === 'kilogram' || bu === 'kilograms')) return qty / 1000;
   if ((u === 'ml') && (bu === 'l' || bu === 'ltr' || bu === 'liter' || bu === 'liters')) return qty / 1000;
-  if (qty >= 10 && bu.includes('kg')) return qty / 1000; // Fallback
+  if (qty >= 10 && bu.includes('kg')) return qty / 1000; 
   return qty;
 };
 
-// TRADITIONAL MASALA SEQUENCE
-// EXACT SEQUENCE BASED ON JMM PHYSICAL BILL BOOK
+// EXACT JMM STRICT SEQUENCE
 const MASALA_SEQUENCE = [
-  "बेडगी", "लवंगी", "काश्मिरी", "मिरची", "धणे", "हळकुंड", "मिरी", "बडीशेप", 
-  "खसखस", "लवंग", "दालचिनी", "लालफुल", "चक्रिफुल", "मसाला वेलची", "दगडफुल", 
-  "तेजपान", "शहाजिरे", "जायफळ", "जायपत्री", "त्रिफळ", "नागकेशर", "कबाब चिनी",
-  "हिंग", "मेथी", "राई", "जिरा", "पिंपळी", "सुंठ", "हिरवी वेलची", "गुलाब पाकळी", 
-  "कसुरी मेथी", "ओवा", "खोबरा", "लसूण", "मीठ", "तेल"
+  "बेडगी", 
+  "लवंगी", "गावठी", 
+  "काश्मिरी", 
+  "संकेश्वरी", "निप्पाणी", 
+  "मिरची", 
+  "धने", "धणे", 
+  "हळकुंड", 
+  "मिरी", 
+  "बडिशेप", "बडीशेप", 
+  "जिरा", 
+  "तिळ", 
+  "खसखस", 
+  "लवंग", 
+  "दालचिनी", 
+  "लालफुल", 
+  "चक्रिफुल", 
+  "मसाला वेलची", 
+  "दगडफुल", 
+  "तेजपान", 
+  "शहाजिरे", 
+  "जायफळ", 
+  "जायपत्री", 
+  "त्रिफळ", 
+  "नागकेशर", 
+  "कबाब चिनी", 
+  "पिंपरी", "पिंपळी",
+  "हिंग", 
+  "मेथी", 
+  "राई", 
+  "सुंठ", 
+  "हिरवी वेलची", 
+  "गुलाब पाकळी", 
+  "कसुरी मेथी", 
+  "ओवा", 
+  "खोबरा", 
+  "लसूण", 
+  "मीठ", 
+  "तेल"
 ];
 
 const StockBadge = ({ item }: { item: Item }) => {
@@ -123,9 +156,6 @@ const StockBadge = ({ item }: { item: Item }) => {
   );
 };
 
-// --- PREMIUM POS NUMPAD COMPONENT (Eliminates iOS Keyboard) ---
-// --- PREMIUM POS NUMPAD COMPONENT (Eliminates iOS Keyboard) ---
-// --- PREMIUM POS NUMPAD COMPONENT (Eliminates iOS Keyboard) ---
 const PosNumpad = ({ value, onChange, allowDecimal = true }: { value: string, onChange: (v: string)=>void, allowDecimal?: boolean }) => {
   const handlePress = (key: string) => {
     if (key === 'DEL') onChange(value.slice(0, -1));
@@ -159,81 +189,6 @@ const EmptyCart = () => (
   </div>
 );
 
-const SwipeAction = ({ label, onSwipe, disabled = false, cartCount = 0, variant = 'default' }: { label: string | React.ReactNode, onSwipe: () => void, disabled?: boolean, cartCount?: number, variant?: 'default' | 'success' }) => {
-  const [dragProgress, setDragProgress] = useState(0);
-  const [isDragging, setIsDragging] = useState(false);
-  const startXRef = useRef(0);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  const getMaxDrag = () => {
-    if (!containerRef.current) return 250;
-    return containerRef.current.offsetWidth - 64; 
-  };
-
-  const handleStart = (clientX: number) => {
-    if (disabled) return;
-    setIsDragging(true);
-    startXRef.current = clientX - (dragProgress * getMaxDrag());
-  };
-
-  const handleMove = (clientX: number) => {
-    if (!isDragging || disabled) return;
-    let newX = clientX - startXRef.current;
-    newX = Math.max(0, Math.min(newX, getMaxDrag()));
-    setDragProgress(newX / getMaxDrag());
-  };
-
-  const handleEnd = () => {
-    if (disabled) return;
-    setIsDragging(false);
-    if (dragProgress > 0.85) {
-      onSwipe();
-      setTimeout(() => setDragProgress(0), 400); 
-    } else {
-      setDragProgress(0);
-    }
-  };
-
-  const isSuccess = variant === 'success';
-
-  return (
-    <div 
-      ref={containerRef}
-      className={`relative h-[64px] rounded-[24px] flex items-center overflow-hidden select-none touch-none border-2 transition-colors ${disabled ? 'bg-zinc-100 border-zinc-200' : (isSuccess ? 'bg-emerald-600 border-emerald-600 shadow-xl shadow-emerald-600/20' : 'bg-zinc-900 border-zinc-900 shadow-xl')}`}
-      onMouseLeave={() => isDragging && handleEnd()}
-      onMouseUp={() => isDragging && handleEnd()}
-      onMouseMove={(e) => isDragging && handleMove(e.clientX)}
-      onTouchEnd={() => isDragging && handleEnd()}
-      onTouchMove={(e) => isDragging && handleMove(e.touches[0].clientX)}
-    >
-      <div 
-        className={`absolute left-0 top-0 bottom-0 rounded-[24px] ${disabled ? 'bg-zinc-200' : (isSuccess ? 'bg-emerald-500' : 'bg-emerald-500')}`}
-        style={{ width: `calc(52px + 8px + ${dragProgress * getMaxDrag()}px)`, opacity: dragProgress > 0.05 ? 1 : 0, transition: isDragging ? 'none' : 'width 0.3s ease-out, opacity 0.3s' }} 
-      />
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <span className={`text-[13px] font-bold tracking-[0.2em] uppercase transition-colors duration-200 z-10 ${dragProgress > 0.4 ? 'text-white' : (disabled ? 'text-zinc-400' : (isSuccess ? 'text-emerald-50' : 'text-zinc-300'))}`}>
-          {dragProgress > 0.85 ? 'Release' : label}
-        </span>
-      </div>
-      {cartCount > 0 && (
-      <div className={`absolute right-4 top-1/2 -translate-y-1/2 transition-opacity duration-200 pointer-events-none z-10 ${dragProgress > 0.1 ? 'opacity-0' : 'opacity-100'}`}>
-         <div className="bg-white/20 text-white text-[11px] font-bold px-2.5 py-1.5 rounded-lg">
-           {cartCount} {cartCount === 1 ? 'ITEM' : 'ITEMS'}
-         </div>
-      </div>
-      )}
-      <div 
-        className={`absolute left-[4px] h-[52px] w-[52px] bg-white rounded-[20px] flex items-center justify-center shadow-md z-20 ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-grab active:cursor-grabbing'}`}
-        style={{ transform: `translateX(${dragProgress * getMaxDrag()}px)`, transition: isDragging ? 'none' : 'transform 0.3s ease-out' }}
-        onMouseDown={(e) => handleStart(e.clientX)}
-        onTouchStart={(e) => handleStart(e.touches[0].clientX)}
-      >
-        <ChevronRight className={`h-6 w-6 transition-transform ${disabled ? 'text-zinc-400' : 'text-zinc-900'} ${dragProgress > 0.85 ? 'rotate-90 text-emerald-600' : ''}`} />
-      </div>
-    </div>
-  );
-};
-
 export default function Billing() {
   const { toast } = useToast();
   const [currentTenantId, setCurrentTenantId] = useState<string | null>(null);
@@ -244,16 +199,42 @@ export default function Billing() {
   const location = useLocation();
   const navigate = useNavigate();
 
+  // START: META CONFIGURATION STATE
+  const [orderMetaOpen, setOrderMetaOpen] = useState(false);
+  const [orderMode, setOrderMode] = useState("WALK_IN"); 
+  const [orderNotes, setOrderNotes] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [customerName, setCustomerName] = useState("");
+  const [customerAddress, setCustomerAddress] = useState("");
+  const [foundCustomer, setFoundCustomer] = useState<Customer | null>(null);
+  // END: META CONFIGURATION STATE
+
   const [selectedCategory, setSelectedCategory] = useState("ALL");
   const [searchTerm, setSearchTerm] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [quickCategories, setQuickCategories] = useState<string[]>([]);
   const [quickQuantity, setQuickQuantity] = useState("1");
+  
+  // CORE CART STATE
   const [cart, setCart] = useState<OrderCartItem[]>([]);
+  
+  // STATE PERSISTENCE
+  const hasLoadedCart = useRef(false);
+  useEffect(() => {
+    if (!hasLoadedCart.current) {
+      const savedCart = localStorage.getItem('biillo-cart');
+      if (savedCart) {
+        try { setCart(JSON.parse(savedCart)); } catch(e) { console.error("Failed to parse cart"); }
+      }
+      hasLoadedCart.current = true;
+    }
+  }, []);
 
-  const [customerPhone, setCustomerPhone] = useState("");
-  const [customerName, setCustomerName] = useState("");
-  const [foundCustomer, setFoundCustomer] = useState<Customer | null>(null);
+  useEffect(() => {
+    if (hasLoadedCart.current) {
+      localStorage.setItem('biillo-cart', JSON.stringify(cart));
+    }
+  }, [cart]);
 
   const [orderNumber, setOrderNumber] = useState("");
   const [deliveryDate, setDeliveryDate] = useState("");
@@ -263,14 +244,12 @@ export default function Billing() {
   const [paymentAmountInput, setPaymentAmountInput] = useState("");
   const [paymentMethodInput, setPaymentMethodInput] = useState<PaymentMethod>("CASH");
 
-// UI Modals
-const [checkoutOpen, setCheckoutOpen] = useState(false); // Mobile/iPad Full Screen
-const [checkoutStep, setCheckoutStep] = useState(1);
-const [paymentDialogOpen, setPaymentDialogOpen] = useState(false); // Desktop Popup
-const [scannerOpen, setScannerOpen] = useState(false);
+  // UI Modals
+  const [checkoutOpen, setCheckoutOpen] = useState(false); 
+  const [checkoutStep, setCheckoutStep] = useState(1);
+  const [paymentDialogOpen, setPaymentDialogOpen] = useState(false); 
+  const [scannerOpen, setScannerOpen] = useState(false);
 
-  
-  
   // Custom Masala States
   const [showCustomMasala, setShowCustomMasala] = useState(false);
   const [customizingCartId, setCustomizingCartId] = useState<string | null>(null);
@@ -279,7 +258,6 @@ const [scannerOpen, setScannerOpen] = useState(false);
   const [masalaMultiplier, setMasalaMultiplier] = useState<number>(1);
   const [customPrice, setCustomPrice] = useState<number | "">("");
   
-  // DYNAMIC SERVICES STATE
   const [availableServices, setAvailableServices] = useState<Item[]>([]);
   const [activeServices, setActiveServices] = useState<AppliedService[]>([]);
 
@@ -287,20 +265,17 @@ const [scannerOpen, setScannerOpen] = useState(false);
   const [completedOrder, setCompletedOrder] = useState<any>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   
-  // SMART WEIGHT STATE
   const [weightDialogOpen, setWeightDialogOpen] = useState(false);
   const [weightedItem, setWeightedItem] = useState<Item | null>(null);
   const [weightInput, setWeightInput] = useState("");
   const [weightInputMode, setWeightInputMode] = useState<'quick'|'custom'>('quick');
 
-  // Global POS Numpad Dialog State
   const [numpadConfig, setNumpadConfig] = useState<{isOpen: boolean, title: string, value: string, allowDecimal: boolean, onConfirm: (v: string)=>void}>({ isOpen: false, title: "", value: "", allowDecimal: true, onConfirm: ()=>{} });
 
   const [printType, setPrintType] = useState<"LABEL" | "RECEIPT" | null>(null);
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const hasAutoOpened = useRef(false);
 
-  // SMART GRIDS FOR QUICK WEIGHT
   const SPICE_WEIGHTS = [
     { label: '10g', val: 0.01 }, { label: '20g', val: 0.02 }, { label: '25g', val: 0.025 },
     { label: '50g', val: 0.05 }, { label: '100g', val: 0.1 }, { label: '200g', val: 0.2 },
@@ -323,20 +298,25 @@ const [scannerOpen, setScannerOpen] = useState(false);
     else if (balanceDue === 0) setPaymentAmountInput("");
   }, [balanceDue, checkoutOpen, paymentDialogOpen]);
 
-  // --- STRICT SEQUENCE SORTING ---
+  const dynamicallyScaledIngredients = useMemo(() => {
+    return tempCustomIngredients.map(ing => ({
+      ...ing,
+      qty: ing.base_qty * masalaMultiplier
+    }));
+  }, [tempCustomIngredients, masalaMultiplier]);
+
   const sortedCustomIngredients = useMemo(() => {
-    return [...tempCustomIngredients].sort((a, b) => {
+    return [...dynamicallyScaledIngredients].sort((a, b) => {
       let idxA = MASALA_SEQUENCE.findIndex(seq => a.item_name.includes(seq));
       let idxB = MASALA_SEQUENCE.findIndex(seq => b.item_name.includes(seq));
       if (idxA === -1) idxA = 999;
       if (idxB === -1) idxB = 999;
       return idxA - idxB;
     });
-  }, [tempCustomIngredients]);
+  }, [dynamicallyScaledIngredients]);
 
-  // --- SMART PRICING ENGINE ---
   const totalMixWeightKg = useMemo(() => {
-    return tempCustomIngredients.reduce((sum, ing) => {
+    return dynamicallyScaledIngredients.reduce((sum, ing) => {
       const u = normalizeUnitStr(ing.unit);
       if (u === 'piece' || u === 'nug' || u === 'pcs') return sum;
       
@@ -344,10 +324,10 @@ const [scannerOpen, setScannerOpen] = useState(false);
       if (u === 'g' || u === 'gm' || u === 'gram') normalizedQty = normalizedQty / 1000;
       return sum + normalizedQty;
     }, 0);
-  }, [tempCustomIngredients]);
+  }, [dynamicallyScaledIngredients]);
 
   const materialCost = useMemo(() => {
-    return tempCustomIngredients.reduce((sum, ing) => {
+    return dynamicallyScaledIngredients.reduce((sum, ing) => {
       const unit = String(ing.unit || "g").toLowerCase().trim();
       const baseUnit = String(ing.base_unit || "kg").toLowerCase().trim();
       let qtyForPricing = Number(ing.qty) || 0;
@@ -362,7 +342,7 @@ const [scannerOpen, setScannerOpen] = useState(false);
 
       return sum + (qtyForPricing * Number(ing.price_per_unit || 0));
     }, 0);
-  }, [tempCustomIngredients]);
+  }, [dynamicallyScaledIngredients]);
 
   const calculatedServicesCharge = useMemo(() => {
     return activeServices.reduce((sum, svc) => sum + (masalaMultiplier * svc.rate), 0);
@@ -374,8 +354,6 @@ const [scannerOpen, setScannerOpen] = useState(false);
     }
   }, [materialCost, calculatedServicesCharge, showCustomMasala]);
 
-
- 
 
   useEffect(() => {
     const initialize = async () => {
@@ -397,14 +375,15 @@ const [scannerOpen, setScannerOpen] = useState(false);
     initialize();
   }, []);
 
-  // DASHBOARD URL HANDSHAKE
   useEffect(() => {
     if (currentTenantId && !hasAutoOpened.current) {
       const params = new URLSearchParams(location.search);
       const action = params.get("action");
       const cat = params.get("category");
       const search = params.get("search");
+      const mode = params.get("mode");
 
+      if (mode) setOrderMode(mode.toUpperCase());
       if (cat) setSelectedCategory(cat.replace(/_/g, " "));
       if (search) setSearchTerm(search);
       if (action === "yearly_masala") {
@@ -452,6 +431,7 @@ const [scannerOpen, setScannerOpen] = useState(false);
       if (data) {
         setFoundCustomer(data);
         setCustomerName(data.full_name || "");
+        setCustomerAddress(data.address || "");
       } else setFoundCustomer(null);
     } catch(e) {}
   }, [currentTenantId]);
@@ -549,7 +529,6 @@ const [scannerOpen, setScannerOpen] = useState(false);
         setCustomPrice(""); 
         setMasalaMultiplier(1);
         
-        // Auto apply default services (Labour and Oil)
         const defaultServices = availableServices
           .filter(s => 
             s.item_name.includes("Labour") || s.item_name.includes("मजूरी") || 
@@ -569,23 +548,32 @@ const [scannerOpen, setScannerOpen] = useState(false);
 
   const openEditMix = (item: OrderCartItem) => {
     setCustomizingCartId(item.cartId);
-    setTempCustomIngredients([...item.customIngredients]);
+    
+    const multiplierToUse = item.recipeMultiplier || 1;
+    const baseIngredients = item.customIngredients.map(ing => ({
+       ...ing,
+       base_qty: ing.qty / multiplierToUse
+    }));
+
+    setTempCustomIngredients(baseIngredients);
     setCustomPrice(Number(item.selling_price || 0));
     setSelectedTemplateId(item.sourceTemplateId || "");
-    setMasalaMultiplier(item.recipeMultiplier || 1);
+    setMasalaMultiplier(multiplierToUse);
     setActiveServices(item.appliedServices || []);
     setShowCustomMasala(true);
   };
 
-  const applyTemplate = (templateId: string, multiplier: number = masalaMultiplier) => {
+  const applyTemplate = (templateId: string) => {
     const template = masalaTemplates.find((item) => item.id === templateId);
     if (!template) return;
     const ingredients: CustomIngredient[] = template.template_ingredients.map((ing) => {
       const itemObj = Array.isArray(ing.items) ? ing.items[0] : ing.items;
+      const baseQty = Number(ing.base_qty || 0);
       return {
         item_id: ing.item_id, 
         item_name: itemObj?.item_name || "Unknown item", 
-        qty: Number(ing.base_qty || 0) * multiplier, 
+        base_qty: baseQty,
+        qty: baseQty, 
         unit: normalizeUnitStr(ing.unit || "g"),
         price_per_unit: Number(itemObj?.selling_price || 0),
         base_unit: normalizeUnitStr(itemObj?.base_unit || "kg")
@@ -593,15 +581,6 @@ const [scannerOpen, setScannerOpen] = useState(false);
     });
     setSelectedTemplateId(templateId);
     setTempCustomIngredients(ingredients);
-  };
-
-  const handleMultiplierChange = (val: string) => {
-    const multi = Number(val);
-    if (multi < 0) return;
-    setMasalaMultiplier(multi);
-    if (selectedTemplateId) {
-      applyTemplate(selectedTemplateId, multi);
-    }
   };
 
   const addCustomIngredient = (itemId: number) => {
@@ -614,6 +593,7 @@ const [scannerOpen, setScannerOpen] = useState(false);
     setTempCustomIngredients((prev) => [...prev, { 
       item_id: raw.id, 
       item_name: getSafeItemName(raw), 
+      base_qty: 0, 
       qty: 0, 
       unit: defaultUnit,
       price_per_unit: Number((raw as any).selling_price || 0),
@@ -621,9 +601,9 @@ const [scannerOpen, setScannerOpen] = useState(false);
     }]);
   };
 
-  // Uses ItemID instead of Map Index to support dynamic sorting safely
-  const updateCustomIngredient = (itemId: number, quantity: number) => {
-    setTempCustomIngredients((prev) => prev.map((ing) => ing.item_id === itemId ? { ...ing, qty: quantity } : ing));
+  const updateCustomIngredient = (itemId: number, newQtyInput: number) => {
+    const newBaseQty = newQtyInput / masalaMultiplier;
+    setTempCustomIngredients((prev) => prev.map((ing) => ing.item_id === itemId ? { ...ing, base_qty: newBaseQty } : ing));
   };
 
   const removeCustomIngredient = (itemId: number) => {
@@ -639,12 +619,14 @@ const [scannerOpen, setScannerOpen] = useState(false);
        }
     }
 
+    const scaledIngredientsToSave = dynamicallyScaledIngredients;
+
     if (customizingCartId) {
-      setCart((prev) => prev.map((item) => item.cartId === customizingCartId ? { ...item, customIngredients: [...tempCustomIngredients], selling_price: Number(customPrice), sourceTemplateId: selectedTemplateId || null, recipeMultiplier: masalaMultiplier, appliedServices: activeServices } : item));
+      setCart((prev) => prev.map((item) => item.cartId === customizingCartId ? { ...item, customIngredients: [...scaledIngredientsToSave], selling_price: Number(customPrice), sourceTemplateId: selectedTemplateId || null, recipeMultiplier: masalaMultiplier, appliedServices: activeServices } : item));
     } else {
       const customItem = allItems.find((item) => getSafeItemName(item) === "Yearly Masala" || getSafeItemName(item) === "Custom Masala Blend");
       if (!customItem) return toast({ title: "Item missing", description: "Create 'Yearly Masala' in DB.", variant: "destructive" });
-      setCart((prev) => [...prev, { ...customItem, cartId: crypto.randomUUID(), cartQuantity: 1, selling_price: Number(customPrice), customIngredients: [...tempCustomIngredients], sourceTemplateId: selectedTemplateId || null, recipeMultiplier: masalaMultiplier, appliedServices: activeServices }]);
+      setCart((prev) => [...prev, { ...customItem, cartId: crypto.randomUUID(), cartQuantity: 1, selling_price: Number(customPrice), customIngredients: [...scaledIngredientsToSave], sourceTemplateId: selectedTemplateId || null, recipeMultiplier: masalaMultiplier, appliedServices: activeServices }]);
     }
     setShowCustomMasala(false);
   };
@@ -665,6 +647,22 @@ const [scannerOpen, setScannerOpen] = useState(false);
     }
   };
 
+  const handleSmartSplit = (cashAmountStr: string) => {
+    const cashAmount = Number(cashAmountStr);
+    if (!cashAmount || cashAmount <= 0 || cashAmount >= balanceDue) {
+      return toast({ title: "Invalid Cash Amount", description: "Cash must be less than the total due.", variant: "destructive" });
+    }
+    
+    const upiAmount = balanceDue - cashAmount;
+    
+    setPayments(prev => [
+      ...prev, 
+      { id: crypto.randomUUID(), method: "CASH", amount: cashAmount },
+      { id: crypto.randomUUID(), method: "UPI", amount: upiAmount }
+    ]);
+    setPaymentAmountInput("");
+  };
+
   const removePayment = (id: string) => setPayments((prev) => prev.filter((p) => p.id !== id));
 
   const ensureCustomer = async (): Promise<Customer | null> => {
@@ -674,7 +672,13 @@ const [scannerOpen, setScannerOpen] = useState(false);
     if (foundCustomer) return foundCustomer;
     const { data: existing } = await (supabase as any).from("customers").select("*").eq("tenant_id", currentTenantId).eq("phone_number", phone).maybeSingle();
     if (existing) return existing;
-    const { data: created } = await (supabase as any).from("customers").insert({ tenant_id: currentTenantId, full_name: customerName || null, phone_number: phone, customer_type: "retail" }).select("*").single();
+    const { data: created } = await (supabase as any).from("customers").insert({ 
+      tenant_id: currentTenantId, 
+      full_name: customerName || null, 
+      phone_number: phone, 
+      address: customerAddress || null, 
+      customer_type: "retail" 
+    }).select("*").single();
     return created;
   };
 
@@ -693,8 +697,11 @@ const [scannerOpen, setScannerOpen] = useState(false);
 
       const { data: order, error: orderError } = await (supabase as any).from("orders").insert({
         tenant_id: currentTenantId, customer_id: customer?.id || null, order_number: orderNumber,
-        source: "WALK_IN", status: orderStatus, payment_status: paymentStatus, total_amount: finalTotal,
-        delivery_date: deliveryDate || null, notes: null,
+        source: orderMode,
+        status: orderStatus, payment_status: paymentStatus, total_amount: finalTotal,
+        delivery_date: deliveryDate || null, 
+        notes: orderNotes || null,
+        customer_address: customerAddress || null
       }).select("*").single();
 
       if (orderError) throw orderError;
@@ -749,6 +756,7 @@ const [scannerOpen, setScannerOpen] = useState(false);
         cartItems: cart,
         customerName: customerName || customer?.full_name || "",
         customerPhone: customerPhone || customer?.phone_number || "",
+        customerAddress: customerAddress || customer?.address || "",
         totalMixWeightKg: totalMixWeight,
         receiptServices: receiptServicesArray,
         advancePaid: totalPaid,
@@ -758,12 +766,10 @@ const [scannerOpen, setScannerOpen] = useState(false);
       });
       setShowSuccessModal(true);
       
-      setCart([]); setPayments([]); setCustomerPhone(""); setCustomerName(""); setFoundCustomer(null); setDeliveryDate("");
-      setDiscountAmount(0); setSearchTerm(""); setSelectedCategory("ALL"); setQuickQuantity("1");
+      resetBill();
       setCheckoutOpen(false); 
       setCheckoutStep(1);
       setPaymentDialogOpen(false);
-      await fetchNextOrderNumber(currentTenantId);
     } catch (error: any) {
       toast({ title: "Transaction Failed", description: error?.message, variant: "destructive" });
     } finally {
@@ -774,6 +780,8 @@ const [scannerOpen, setScannerOpen] = useState(false);
   const resetBill = async () => {
     setCart([]); setPayments([]); setCustomerPhone(""); setCustomerName(""); setFoundCustomer(null);
     setDeliveryDate(""); setDiscountAmount(0); setSearchTerm(""); setSelectedCategory("ALL"); setQuickQuantity("1");
+    setOrderNotes(""); setCustomerAddress(""); setOrderMode("WALK_IN");
+    localStorage.removeItem('biillo-cart');
     if (currentTenantId) await fetchNextOrderNumber(currentTenantId);
   };
 
@@ -808,11 +816,16 @@ const [scannerOpen, setScannerOpen] = useState(false);
           <h2 className="font-semibold tracking-tight text-zinc-900">Current Ledger</h2>
           <p className="text-xs font-medium text-zinc-500">{cart.length} items</p>
         </div>
-        {cart.length > 0 && (
-          <button onClick={resetBill} className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-zinc-600 border border-zinc-200 hover:bg-zinc-50 transition-all">
-            <RotateCcw className="h-3.5 w-3.5" /> Reset
+        <div className="flex items-center gap-2">
+          <button onClick={() => setOrderMetaOpen(true)} className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-blue-600 border border-blue-200 bg-blue-50 hover:bg-blue-100 transition-all">
+            <Edit3 className="h-3.5 w-3.5" /> Info
           </button>
-        )}
+          {cart.length > 0 && (
+            <button onClick={resetBill} className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-rose-600 border border-rose-200 bg-rose-50 hover:bg-rose-100 transition-all">
+              <Trash2 className="h-3.5 w-3.5" /> Clear
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
@@ -896,7 +909,11 @@ const [scannerOpen, setScannerOpen] = useState(false);
             <div className="flex items-center gap-3 w-full">
               <div className="hidden shrink-0 lg:block mr-2">
                 <h1 className="text-lg font-semibold tracking-tight text-zinc-900">Billing</h1>
-                <p className="text-[11px] font-medium text-zinc-500">Fast counter checkout</p>
+                <div onClick={() => setOrderMetaOpen(true)} className="flex items-center gap-1.5 mt-0.5 cursor-pointer hover:bg-zinc-100 p-1 -ml-1 rounded-md transition-colors w-max">
+                  <span className="flex h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <p className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest">{orderMode.replace('_', ' ')} MODE</p>
+                  <Edit3 className="h-3 w-3 text-zinc-400" />
+                </div>
               </div>
 
               <div className="relative min-w-0 flex-1">
@@ -910,6 +927,17 @@ const [scannerOpen, setScannerOpen] = useState(false);
                    <Mic className="h-4 w-4" />
                 </button>
               </div>
+
+              {/* HEADER CART BUTTON WITH BADGE */}
+              <Button onClick={() => { setCheckoutStep(1); setCheckoutOpen(true); }} variant="outline" className="relative h-12 rounded-xl border-zinc-200 bg-white px-3 font-semibold shadow-sm hover:bg-zinc-50 xl:hidden">
+                <ShoppingCart className="h-5 w-5 text-zinc-600 sm:mr-2" />
+                <span className="hidden sm:inline">Cart</span>
+                {cart.length > 0 && (
+                  <span className="absolute -top-2 -right-2 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-[10px] font-bold text-white border-2 border-white shadow-sm">
+                    {cart.length}
+                  </span>
+                )}
+              </Button>
 
               <Button variant="outline" onClick={() => setScannerOpen(true)} className="h-12 rounded-xl border-zinc-200 bg-white px-3 font-semibold shadow-sm">
                 <ScanLine className="h-5 w-5 sm:mr-2 text-zinc-600" />
@@ -986,12 +1014,12 @@ const [scannerOpen, setScannerOpen] = useState(false);
                           <StockBadge item={item} />
                         </div>
                         <div className="flex-1">
-  <h3 className="line-clamp-1 text-sm font-semibold leading-tight text-zinc-900">{getSafeItemName(item)}</h3>
-  {(item as any).english_name && (
-    <p className="text-[11px] font-medium text-zinc-500 truncate leading-tight">{(item as any).english_name}</p>
-  )}
-  <p className="mt-0.5 text-[10px] font-medium text-zinc-400">{item.item_code}</p>
-</div>
+                          <h3 className="line-clamp-1 text-sm font-semibold leading-tight text-zinc-900">{getSafeItemName(item)}</h3>
+                          {(item as any).english_name && (
+                            <p className="text-[11px] font-medium text-zinc-500 truncate leading-tight">{(item as any).english_name}</p>
+                          )}
+                          <p className="mt-0.5 text-[10px] font-medium text-zinc-400">{item.item_code}</p>
+                        </div>
                         <div className="mt-3 flex items-end justify-between gap-2">
                           <div>
                             <p className="text-base font-semibold tracking-tight text-zinc-900">{formatCurrency(Number(item.selling_price || 0))}</p>
@@ -1018,13 +1046,52 @@ const [scannerOpen, setScannerOpen] = useState(false);
           </aside>
         </div>
 
-      {/* --- FIXED IPAD BUTTON VISIBILITY --- */}
       {cart.length > 0 && !checkoutOpen && (
           <div className="absolute bottom-6 left-0 right-0 mx-auto w-[92%] max-w-[400px] z-40 xl:hidden animate-in fade-in slide-in-from-bottom-4">
-            <SwipeAction cartCount={cart.length} label={`Swipe to Pay ${formatCurrency(finalTotal)}`} onSwipe={() => { setCheckoutStep(1); setCheckoutOpen(true); }} />
+             <Button onClick={() => { setCheckoutStep(1); setCheckoutOpen(true); }} className="h-14 w-full rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-white font-bold shadow-xl flex items-center justify-center text-lg active:scale-95 transition-all">
+                Pay {formatCurrency(finalTotal)} <ChevronRight className="ml-2 h-5 w-5" />
+             </Button>
           </div>
         )}
       </div>
+
+      {/* --- PRE-CHECKOUT ORDER META DIALOG --- */}
+      <Dialog open={orderMetaOpen} onOpenChange={setOrderMetaOpen}>
+        <DialogContent aria-describedby={undefined} className="sm:max-w-md w-[95vw] rounded-[32px] p-6 shadow-2xl border-zinc-200 bg-white">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold text-zinc-900">Order Information</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-5 mt-2">
+            <div>
+              <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">Order Mode</Label>
+              <div className="flex gap-2 p-1 bg-zinc-100/80 border border-zinc-200 rounded-xl mt-1.5 shadow-inner">
+                {["WALK_IN", "MONTHLY", "ONLINE"].map(m => (
+                  <button key={m} onClick={() => setOrderMode(m)} className={`flex-1 h-10 rounded-lg text-xs font-bold transition-all ${orderMode === m ? 'bg-white text-zinc-900 shadow-sm border border-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}>{m.replace('_', ' ')}</button>
+                ))}
+              </div>
+            </div>
+            
+            <div>
+              <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">Customer Details</Label>
+              <div className="space-y-2 mt-1.5">
+                <button onClick={() => setNumpadConfig({isOpen: true, title: "Customer Phone", value: customerPhone, allowDecimal: false, onConfirm: (v) => handlePhoneChange(v)})} className="h-12 w-full px-4 text-left text-[15px] rounded-xl font-bold bg-zinc-50 border border-zinc-200 shadow-inner flex items-center hover:bg-zinc-100 transition-colors">
+                   {customerPhone || <span className="text-zinc-400 font-medium">Phone Number</span>}
+                </button>
+                <Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Full Name" className="h-12 px-4 text-[15px] rounded-xl font-bold bg-zinc-50 border-zinc-200 shadow-inner" />
+                <Input value={customerAddress} onChange={e => setCustomerAddress(e.target.value)} placeholder="Delivery Address" className="h-12 px-4 text-[15px] rounded-xl font-bold bg-zinc-50 border-zinc-200 shadow-inner" />
+              </div>
+            </div>
+
+            <div>
+               <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">Order Notes</Label>
+               <Input value={orderNotes} onChange={e => setOrderNotes(e.target.value)} placeholder="Special instructions..." className="h-12 mt-1.5 px-4 text-[15px] rounded-xl font-bold bg-zinc-50 border-zinc-200 shadow-inner" />
+            </div>
+          </div>
+          <DialogFooter className="mt-6">
+            <Button onClick={() => setOrderMetaOpen(false)} className="w-full h-14 rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-[16px] shadow-sm active:scale-95">Save Details</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* --- FULL-SCREEN MOBILE/IPAD STEP-WIZARD --- */}
       {checkoutOpen && (
@@ -1044,7 +1111,7 @@ const [scannerOpen, setScannerOpen] = useState(false);
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 sm:p-5">
-             {/* STEP 1: REVIEW LEDGER */}
+             {/* STEP 1: REVIEW LEDGER & ACTIVE EDITING */}
              {checkoutStep === 1 && (
                <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
                   <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-zinc-200 shadow-sm">
@@ -1052,14 +1119,25 @@ const [scannerOpen, setScannerOpen] = useState(false);
                     <span className="text-xs font-bold bg-zinc-100 px-3 py-1.5 rounded-lg text-zinc-700">{cart.length}</span>
                   </div>
                   <div className="bg-white border border-zinc-200 rounded-2xl shadow-sm p-4">
-                    <div className="max-h-[45vh] overflow-y-auto space-y-4 pr-2">
+                    <div className="max-h-[50vh] overflow-y-auto space-y-4 pr-2">
                       {cart.map(item => (
-                        <div key={item.cartId} className="flex justify-between items-start text-sm pb-4 border-b border-zinc-100 last:border-0 last:pb-0">
-                          <div className="flex-1 pr-3">
-                            <span className="font-bold text-zinc-800 leading-tight block">{getSafeItemName(item)}</span>
-                            <div className="text-[11px] font-bold text-zinc-500 mt-1">{item.cartQuantity} x {formatCurrency(item.selling_price || 0)}</div>
+                        <div key={item.cartId} className="flex flex-col gap-2 text-sm pb-4 border-b border-zinc-100 last:border-0 last:pb-0">
+                          <div className="flex justify-between items-start">
+                            <div className="flex-1 pr-3">
+                              <span className="font-bold text-zinc-800 leading-tight block">{getSafeItemName(item)}</span>
+                              <div className="text-[11px] font-bold text-zinc-500 mt-1">{formatCurrency(item.selling_price || 0)} / {getItemDisplayUnit(item)}</div>
+                            </div>
+                            <span className="font-bold text-zinc-900 text-[15px]">{formatCurrency(item.cartQuantity * Number(item.selling_price || 0))}</span>
                           </div>
-                          <span className="font-bold text-zinc-900 text-[15px]">{formatCurrency(item.cartQuantity * Number(item.selling_price || 0))}</span>
+                          
+                          <div className="flex items-center justify-between mt-1">
+                            <div className="flex items-center rounded-lg border border-zinc-200 bg-zinc-50 h-9">
+                              <button type="button" onClick={() => updateCartQuantity(item.cartId, item.cartQuantity - 1)} className="flex h-full w-9 items-center justify-center text-zinc-600 hover:bg-zinc-100"><Minus className="h-4 w-4" /></button>
+                              <span className="min-w-[2.5rem] text-center text-[13px] font-bold text-zinc-900">{item.cartQuantity}</span>
+                              <button type="button" onClick={() => updateCartQuantity(item.cartId, item.cartQuantity + 1)} className="flex h-full w-9 items-center justify-center text-zinc-600 hover:bg-zinc-100"><Plus className="h-4 w-4" /></button>
+                            </div>
+                            <button onClick={() => removeCartItem(item.cartId)} className="flex items-center justify-center h-9 w-9 rounded-md text-zinc-400 hover:text-rose-500 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -1074,10 +1152,25 @@ const [scannerOpen, setScannerOpen] = useState(false);
                   <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Order Settings</Label>
                   <div className="space-y-5 bg-white p-5 rounded-[24px] border border-zinc-200 shadow-sm">
                     <div>
+                      <Label className="text-[13px] font-bold text-zinc-800 mb-2 block">Order Mode</Label>
+                      <div className="flex gap-2 p-1 bg-zinc-100/80 border border-zinc-200 rounded-xl shadow-inner">
+                        {["WALK_IN", "MONTHLY", "ONLINE"].map(m => (
+                          <button key={m} onClick={() => setOrderMode(m)} className={`flex-1 h-10 rounded-lg text-xs font-bold transition-all ${orderMode === m ? 'bg-white text-zinc-900 shadow-sm border border-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}>{m.replace('_', ' ')}</button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
                       <Label className="text-[13px] font-bold text-zinc-800 mb-2 block">Order Number</Label>
                       <div className="relative">
                         <Receipt className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
                         <Input value={orderNumber} onChange={e => setOrderNumber(e.target.value)} className="h-14 pl-11 text-[16px] rounded-2xl font-bold bg-zinc-50 border-zinc-200 shadow-inner" />
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="text-[13px] font-bold text-zinc-800 mb-2 block">Order Notes</Label>
+                      <div className="relative">
+                        <NotebookPen className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                        <Input value={orderNotes} onChange={e => setOrderNotes(e.target.value)} placeholder="Add remarks or instructions..." className="h-14 pl-11 text-[16px] rounded-2xl font-bold bg-zinc-50 border-zinc-200 shadow-inner" />
                       </div>
                     </div>
                     <div>
@@ -1109,11 +1202,14 @@ const [scannerOpen, setScannerOpen] = useState(false);
                       </div>
                     </div>
                     {customerPhone.length >= 10 && (
-                      <div className="animate-in fade-in slide-in-from-top-2">
-                        <Label className="text-[13px] font-bold text-zinc-800 mb-2 block">Full Name</Label>
+                      <div className="relative mt-2 animate-in fade-in slide-in-from-top-2 space-y-3">
                         <div className="relative">
                           <UserRound className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
                           <Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Customer Name" className="h-14 pl-11 text-[16px] rounded-2xl font-bold bg-zinc-50 border-zinc-200 shadow-inner" />
+                        </div>
+                        <div className="relative">
+                          <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                          <Input value={customerAddress} onChange={e => setCustomerAddress(e.target.value)} placeholder="Delivery Address" className="h-14 pl-11 text-[16px] rounded-2xl font-bold bg-zinc-50 border-zinc-200 shadow-inner" />
                         </div>
                       </div>
                     )}
@@ -1121,7 +1217,7 @@ const [scannerOpen, setScannerOpen] = useState(false);
                </div>
              )}
 
-             {/* STEP 4: PAYMENT SPLIT (Redesigned) */}
+             {/* STEP 4: PAYMENT SPLIT (Smart Calculator) */}
              {checkoutStep === 4 && (
                <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
                   <div className="flex justify-between items-center px-1">
@@ -1150,10 +1246,12 @@ const [scannerOpen, setScannerOpen] = useState(false);
                     </div>
                     
                     {balanceDue > 0 && (
-                      <div className="flex gap-2 overflow-x-auto scrollbar-none pt-1">
-                        <button onClick={() => setPaymentAmountInput(String(balanceDue))} className="px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold shadow-sm active:scale-95 text-zinc-700">Full Pay</button>
-                        <button onClick={() => setPaymentAmountInput(String(Math.floor(balanceDue / 2)))} className="px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold shadow-sm active:scale-95 text-zinc-700">Split 50%</button>
-                        <button onClick={() => { setPayments([]); setPaymentAmountInput(""); }} className="px-4 py-3 bg-rose-50 border border-rose-200 rounded-xl text-xs font-bold text-rose-700 shadow-sm active:scale-95">Udhaar (0 Pay)</button>
+                      <div className="flex gap-2 overflow-x-auto scrollbar-none pt-1 pb-1">
+                        <button onClick={() => setPaymentAmountInput(String(balanceDue))} className="px-4 py-3 bg-white border border-zinc-200 rounded-xl text-xs font-bold shadow-sm active:scale-95 text-zinc-700 whitespace-nowrap">Full Pay</button>
+                        <button onClick={() => setNumpadConfig({isOpen: true, title: "Enter CASH Received (Rest is UPI)", value: "", allowDecimal: true, onConfirm: handleSmartSplit})} className="px-4 py-3 bg-white border border-zinc-200 rounded-xl text-xs font-bold shadow-sm active:scale-95 text-zinc-700 whitespace-nowrap">
+                           Split (Cash + UPI)
+                        </button>
+                        <button onClick={() => { setPayments([]); setPaymentAmountInput(""); }} className="px-4 py-3 bg-rose-50 border border-rose-200 rounded-xl text-xs font-bold text-rose-700 shadow-sm active:scale-95 whitespace-nowrap">Udhaar (0 Pay)</button>
                       </div>
                     )}
                     
@@ -1197,13 +1295,12 @@ const [scannerOpen, setScannerOpen] = useState(false);
           
           <div className="p-4 sm:p-5 border-t border-zinc-200 bg-white shrink-0 pb-safe shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
              <div className="max-w-[500px] mx-auto">
-               {checkoutStep === 1 && <SwipeAction label="Swipe to Confirm Ledger" onSwipe={() => setCheckoutStep(2)} />}
-               {checkoutStep === 2 && <SwipeAction label="Swipe to Confirm Details" onSwipe={() => setCheckoutStep(3)} />}
-               {checkoutStep === 3 && <SwipeAction label="Swipe to Confirm CRM" onSwipe={() => setCheckoutStep(4)} />}
-               {checkoutStep === 4 && <SwipeAction label="Swipe to Review Payment" disabled={balanceDue > 0 && !customerPhone} onSwipe={() => setCheckoutStep(5)} />}
+               {checkoutStep === 1 && <Button onClick={() => setCheckoutStep(2)} className="h-14 w-full rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-lg active:scale-95 transition-all">Confirm Ledger <ChevronRight className="ml-2 h-5 w-5" /></Button>}
+               {checkoutStep === 2 && <Button onClick={() => setCheckoutStep(3)} className="h-14 w-full rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-lg active:scale-95 transition-all">Confirm Details <ChevronRight className="ml-2 h-5 w-5" /></Button>}
+               {checkoutStep === 3 && <Button onClick={() => setCheckoutStep(4)} className="h-14 w-full rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-lg active:scale-95 transition-all">Confirm CRM <ChevronRight className="ml-2 h-5 w-5" /></Button>}
+               {checkoutStep === 4 && <Button disabled={balanceDue > 0 && !customerPhone} onClick={() => setCheckoutStep(5)} className="h-14 w-full rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-lg active:scale-95 transition-all">Review Payment <ChevronRight className="ml-2 h-5 w-5" /></Button>}
                
-               {/* GREEN THEMED FINAL SWIPE */}
-               {checkoutStep === 5 && <SwipeAction variant="success" label={isProcessing ? "Processing..." : "Swipe to Complete Order"} disabled={isProcessing} onSwipe={createOrder} />}
+               {checkoutStep === 5 && <Button disabled={isProcessing} onClick={createOrder} className="h-14 w-full rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-lg shadow-[0_4px_15px_rgba(16,185,129,0.25)] active:scale-[0.98] transition-transform">{isProcessing ? "Processing..." : "Complete Transaction"}</Button>}
                
                {checkoutStep === 4 && balanceDue > 0 && !customerPhone && (
                  <p className="text-[10px] text-center text-rose-500 font-bold mt-3 uppercase tracking-widest">Customer phone required for pending balance</p>
@@ -1232,6 +1329,15 @@ const [scannerOpen, setScannerOpen] = useState(false);
 
             <div className="space-y-5">
               <div className="space-y-2">
+                <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Order Mode</Label>
+                <div className="flex gap-2 p-1 bg-zinc-100/80 border border-zinc-200 rounded-xl shadow-inner mb-4">
+                  {["WALK_IN", "MONTHLY", "ONLINE"].map(m => (
+                    <button key={m} onClick={() => setOrderMode(m)} className={`flex-1 h-10 rounded-lg text-xs font-bold transition-all ${orderMode === m ? 'bg-white text-zinc-900 shadow-sm border border-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}>{m.replace('_', ' ')}</button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
                 <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Order Details</Label>
                 <div className="flex gap-2">
                   <div className="relative flex-1">
@@ -1239,6 +1345,10 @@ const [scannerOpen, setScannerOpen] = useState(false);
                     <Input value={orderNumber} onChange={e => setOrderNumber(e.target.value)} className="h-12 pl-11 text-[16px] rounded-xl border-zinc-200 shadow-sm font-bold bg-white" placeholder="Order No."/>
                   </div>
                   <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className="h-12 w-[130px] rounded-xl border-zinc-200 shadow-sm text-[16px] font-bold bg-white" />
+                </div>
+                <div className="relative mt-2">
+                  <NotebookPen className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                  <Input value={orderNotes} onChange={e => setOrderNotes(e.target.value)} className="h-12 pl-11 text-[16px] rounded-xl border-zinc-200 shadow-sm font-bold bg-white" placeholder="Order Notes / Instructions"/>
                 </div>
               </div>
 
@@ -1251,9 +1361,15 @@ const [scannerOpen, setScannerOpen] = useState(false);
                   </button>
                 </div>
                 {customerPhone.length >= 10 && (
-                  <div className="relative mt-2 animate-in fade-in slide-in-from-top-2">
-                    <UserRound className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                    <Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Customer Name" className="h-12 pl-11 text-[16px] rounded-xl border-zinc-200 shadow-sm font-bold bg-white" />
+                  <div className="relative mt-2 animate-in fade-in slide-in-from-top-2 space-y-2">
+                    <div className="relative">
+                      <UserRound className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                      <Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Customer Name" className="h-12 pl-11 text-[16px] rounded-xl border-zinc-200 shadow-sm font-bold bg-white" />
+                    </div>
+                    <div className="relative">
+                      <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                      <Input value={customerAddress} onChange={e => setCustomerAddress(e.target.value)} placeholder="Delivery Address" className="h-12 pl-11 text-[16px] rounded-xl border-zinc-200 shadow-sm font-bold bg-white" />
+                    </div>
                   </div>
                 )}
               </div>
@@ -1263,7 +1379,6 @@ const [scannerOpen, setScannerOpen] = useState(false);
                    <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Split Payment Record</Label>
                 </div>
                 
-                {/* Redesigned Desktop Split Payment Area */}
                 <div className="flex gap-2 p-1 bg-white border border-zinc-200 rounded-xl mb-2 shadow-sm">
                   {["CASH", "UPI", "CARD"].map(m => (
                     <button key={m} onClick={() => setPaymentMethodInput(m as PaymentMethod)} className={`flex-1 h-10 rounded-lg text-xs font-bold transition-all ${paymentMethodInput === m ? 'bg-zinc-900 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>{m}</button>
@@ -1279,9 +1394,9 @@ const [scannerOpen, setScannerOpen] = useState(false);
                 
                 {balanceDue > 0 && (
                   <div className="flex gap-2 overflow-x-auto scrollbar-none pt-1">
-                    <button onClick={() => setPaymentAmountInput(String(balanceDue))} className="px-3 py-2 bg-white border border-zinc-200 rounded-lg text-xs font-bold shadow-sm active:scale-95">Full Pay</button>
-                    <button onClick={() => setPaymentAmountInput(String(Math.floor(balanceDue / 2)))} className="px-3 py-2 bg-white border border-zinc-200 rounded-lg text-xs font-bold shadow-sm active:scale-95">Split 50%</button>
-                    <button onClick={() => { setPayments([]); setPaymentAmountInput(""); }} className="px-3 py-2 bg-rose-50 border border-rose-200 rounded-lg text-xs font-bold text-rose-700 shadow-sm active:scale-95">Udhaar (0 Pay)</button>
+                    <button onClick={() => setPaymentAmountInput(String(balanceDue))} className="px-3 py-2 bg-white border border-zinc-200 rounded-lg text-xs font-bold shadow-sm active:scale-95 whitespace-nowrap">Full Pay</button>
+                    <button onClick={() => setNumpadConfig({isOpen: true, title: "Enter CASH Received (Rest is UPI)", value: "", allowDecimal: true, onConfirm: handleSmartSplit})} className="px-3 py-2 bg-white border border-zinc-200 rounded-lg text-xs font-bold shadow-sm active:scale-95 whitespace-nowrap text-zinc-700">Split (Cash + UPI)</button>
+                    <button onClick={() => { setPayments([]); setPaymentAmountInput(""); }} className="px-3 py-2 bg-rose-50 border border-rose-200 rounded-lg text-xs font-bold text-rose-700 shadow-sm active:scale-95 whitespace-nowrap">Udhaar (0 Pay)</button>
                   </div>
                 )}
 
@@ -1310,7 +1425,7 @@ const [scannerOpen, setScannerOpen] = useState(false);
         </DialogContent>
       </Dialog>
       
-      {/* GLOBAL POS NUMPAD OVERLAY (Custom Z-Index 120 to stay above Checkout Drawer) */}
+      {/* GLOBAL POS NUMPAD OVERLAY */}
       {numpadConfig.isOpen && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-zinc-950/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="sm:max-w-[380px] w-[95vw] rounded-[32px] p-6 shadow-2xl border border-zinc-200 bg-white animate-in zoom-in-95 duration-200">
@@ -1389,7 +1504,7 @@ const [scannerOpen, setScannerOpen] = useState(false);
                  </select>
                </div>
 
-               {/* iOS STYLE HORIZONTAL BATCH SELECTOR */}
+               {/* BATCH MULTIPLIER */}
                <div className="space-y-2">
                  <Label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">Batch Multiplier</Label>
                  <div className="flex items-center gap-2">
@@ -1418,11 +1533,11 @@ const [scannerOpen, setScannerOpen] = useState(false);
                 {sortedCustomIngredients.map((ing, idx) => (
                   <div key={`${ing.item_id}-${idx}`} className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white p-1.5 shadow-sm">
                     <div className="min-w-0 flex-1 pl-2"><p className="truncate text-xs font-semibold text-zinc-900">{ing.item_name}</p></div>
-                    <button onClick={() => setNumpadConfig({isOpen: true, title: `Edit ${ing.item_name}`, value: String(ing.qty), allowDecimal: true, onConfirm: (v) => setTempCustomIngredients(p => p.map(i => i.item_id === ing.item_id ? { ...i, qty: Number(v) } : i))})} className="h-9 w-20 rounded-md border border-zinc-200 bg-white text-center font-bold text-[16px] shadow-sm flex items-center justify-center active:bg-zinc-100 text-zinc-900">
+                    <button onClick={() => setNumpadConfig({isOpen: true, title: `Edit ${ing.item_name}`, value: String(ing.qty), allowDecimal: true, onConfirm: (v) => updateCustomIngredient(ing.item_id, Number(v))})} className="h-9 w-20 rounded-md border border-zinc-200 bg-white text-center font-bold text-[16px] shadow-sm flex items-center justify-center active:bg-zinc-100 text-zinc-900">
                       {ing.qty}
                     </button>
                     <span className="text-[10px] font-medium text-zinc-400 w-5">{ing.unit}</span>
-                    <button onClick={() => setTempCustomIngredients(p => p.filter(i => i.item_id !== ing.item_id))} className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 hover:text-rose-500 hover:bg-rose-50"><Trash2 className="h-3.5 w-3.5" /></button>
+                    <button onClick={() => removeCustomIngredient(ing.item_id)} className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 hover:text-rose-500 hover:bg-rose-50"><Trash2 className="h-3.5 w-3.5" /></button>
                   </div>
                 ))}
               </div>
@@ -1463,8 +1578,9 @@ const [scannerOpen, setScannerOpen] = useState(false);
           </DialogFooter>
         </DialogContent>
       </Dialog>
-{/* SCANNER DIALOG */}
-<Dialog open={scannerOpen} onOpenChange={setScannerOpen}>
+      
+      {/* SCANNER DIALOG */}
+      <Dialog open={scannerOpen} onOpenChange={setScannerOpen}>
         <DialogContent aria-describedby={undefined} className="sm:max-w-md w-[95vw] overflow-hidden rounded-3xl p-0 flex flex-col max-h-[90dvh]">
           <DialogHeader className="border-b border-zinc-100 px-5 py-4 bg-zinc-50/50 shrink-0">
             <DialogTitle className="flex items-center gap-2 text-base font-semibold text-zinc-900"><Camera className="h-4 w-4" /> Scan Barcode</DialogTitle>

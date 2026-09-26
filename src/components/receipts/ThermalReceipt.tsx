@@ -1,12 +1,13 @@
 import React from "react";
 
-// Exact JMM Strict Sequence
+// EXACT JMM STRICT SEQUENCE (Updated with new sorting & spelling fallbacks)
 const MASALA_SEQUENCE = [
-  "बेडगी", "लवंगी", "काश्मिरी", "मिरची", "धणे", "हळकुंड", "मिरी", "बडीशेप", 
+  "बेडगी", "लवंगी", "गावठी", "काश्मिरी", "संकेश्वरी", "निप्पाणी", "मिरची", 
+  "धने", "धणे", "हळकुंड", "मिरी", "बडिशेप", "बडीशेप", "जिरा", "तिळ", 
   "खसखस", "लवंग", "दालचिनी", "लालफुल", "चक्रिफुल", "मसाला वेलची", "दगडफुल", 
-  "तेजपान", "शहाजिरे", "जायफळ", "जायपत्री", "त्रिफळ", "नागकेशर", "कबाब चिनी",
-  "हिंग", "मेथी", "राई", "जिरा", "पिंपळी", "सुंठ", "हिरवी वेलची", "गुलाब पाकळी", 
-  "कसुरी मेथी", "ओवा", "खोबरा", "लसूण", "मीठ", "तेल"
+  "तेजपान", "शहाजिरे", "जायफळ", "जायपत्री", "त्रिफळ", "नागकेशर", "कबाब चिनी", 
+  "पिंपरी", "पिंपळी", "हिंग", "मेथी", "राई", "सुंठ", "हिरवी वेलची", 
+  "गुलाब पाकळी", "कसुरी मेथी", "ओवा", "खोबरा", "लसूण", "मीठ", "तेल"
 ];
 
 const normalizeUnitStr = (str: string) => String(str || "").toLowerCase().trim();
@@ -22,17 +23,9 @@ const getNormalizedQtyForCost = (qty: number, displayUnit: string, dbBaseUnit: s
   const u = normalizeUnitStr(displayUnit); 
   const bu = normalizeUnitStr(dbBaseUnit);
   
-  // Explicitly catch grams and convert to kg
-  if (['g', 'gm', 'gram', 'grams', 'ग्रॅम', 'ग्राम'].includes(u)) {
-    return qty / 1000;
-  }
-  if (u === 'piece' || u === 'nug' || u === 'pcs' || bu === 'piece') {
-    return qty;
-  }
-  // Fallback for raw spices entered in grams without explicit unit label
-  if (qty >= 10 && (bu.includes('kg') || !bu)) {
-    return qty / 1000;
-  }
+  if (['g', 'gm', 'gram', 'grams', 'ग्रॅम', 'ग्राम'].includes(u)) return qty / 1000;
+  if (u === 'piece' || u === 'nug' || u === 'pcs' || bu === 'piece') return qty;
+  if (qty >= 10 && (bu.includes('kg') || !bu)) return qty / 1000;
   return qty;
 };
 
@@ -41,11 +34,18 @@ export const ThermalReceipt = ({ order, source = "billing" }: { order: any, sour
 
   // 1. Normalize Core Data
   const customerName = order.customerName || order.customers?.full_name || "Walk-in Customer";
+  const customerPhone = order.customerPhone || order.customers?.phone_number || "";
+  const customerAddress = order.customerAddress || order.customers?.address || "";
   const dateStr = new Date(order.created_at || Date.now()).toLocaleDateString('en-IN');
   const totalAmount = Math.floor(order.final_amount || order.total_amount || 0);
   const advancePaid = Math.floor(order.advancePaid || order.amount_paid || 0);
   const balanceDue = Math.floor(order.balanceDue || order.balance_due || 0);
   const totalMixWeightKg = order.totalMixWeightKg || 0;
+
+  // Additional Meta Info
+  const orderMode = order.source || "WALK_IN";
+  const orderNotes = order.notes || "";
+  const paymentsList = order.payments || []; // Array of { method: string, amount: number }
 
   const footerText = "Thank you for shopping! Visit again.";
 
@@ -133,22 +133,32 @@ export const ThermalReceipt = ({ order, source = "billing" }: { order: any, sour
           .td-wgt { text-align: center; font-weight: bold; width: 25%; border-left: 2px solid black; border-right: 2px solid black; }
           .td-rs { text-align: right; font-weight: bold; width: 20%; }
           .td-paise { text-align: center; font-weight: bold; width: 10%; border-left: 2px solid black; }
-          .totals-row td { border-top: 2px solid black; font-weight: 900; }
           
-          .customer-info { display: flex; justify-content: space-between; font-weight: bold; font-size: 15px; margin-bottom: 10px; padding: 0 5px; }
-          .header-image { width: 100%; object-fit: contain; margin-bottom: 15px; border-bottom: 3px solid #880000; }
+          .totals-row td { border-top: 2px solid black; font-weight: 900; }
+          .payment-breakdown td { border-top: 1px dashed black; font-weight: 600; font-size: 13px; }
+          
+          .meta-header { display: flex; justify-content: space-between; font-weight: bold; font-size: 12px; margin-bottom: 5px; padding: 0 5px; border-bottom: 1px solid black; padding-bottom: 4px; }
+          .customer-info { font-weight: bold; font-size: 14px; margin-bottom: 10px; padding: 0 5px; line-height: 1.4; }
+          .header-image { width: 100%; object-fit: contain; margin-bottom: 5px; border-bottom: 3px solid #880000; }
           
           .receipt-footer { margin-top: 15px; text-align: center; font-size: 13px; }
           .receipt-footer .thank-you { font-weight: 600; font-style: italic; margin-bottom: 2px; }
+          .receipt-footer .notes { margin-top: 8px; font-weight: bold; font-size: 14px; border: 1px dashed black; padding: 5px; display: inline-block;}
           .footer-image { width: 100%; max-height: 200px; object-fit: contain; margin-top: 0; page-break-inside: avoid; }
         `}
       </style>
       
       <img src="/jmm-bill-header.png" alt="JMM Spices Header" className="header-image" />
       
+      <div className="meta-header">
+        <div>No: {order.order_number}</div>
+        <div>Mode: {orderMode.replace('_', ' ')}</div>
+        <div>Date: {dateStr}</div>
+      </div>
+
       <div className="customer-info">
-        <div>नाव: {customerName}</div>
-        <div>दि.: {dateStr}</div>
+        <div>नाव: {customerName} {customerPhone ? `(${customerPhone})` : ''}</div>
+        {customerAddress && <div>पत्ता: {customerAddress}</div>}
       </div>
 
       <table>
@@ -190,13 +200,24 @@ export const ThermalReceipt = ({ order, source = "billing" }: { order: any, sour
             <td className="td-rs text-lg">{totalAmount}</td>
             <td className="td-paise">00</td>
           </tr>
+
           <tr className="totals-row">
-            <td className="td-item" colSpan={2}>ॲडव्हान्स जमा</td>
+            <td className="td-item" colSpan={2}>जमा रक्कम</td>
             <td className="td-rs">{advancePaid}</td>
             <td className="td-paise">00</td>
           </tr>
+
+          {/* DYNAMIC PAYMENT BREAKDOWN */}
+          {paymentsList.length > 0 && paymentsList.map((payment: any, i: number) => (
+            <tr key={`pay-${i}`} className="payment-breakdown">
+              <td className="td-item text-right pr-4" colSpan={2}>via {payment.payment_method || payment.method}</td>
+              <td className="td-rs">{payment.amount}</td>
+              <td className="td-paise">00</td>
+            </tr>
+          ))}
+
           <tr className="totals-row">
-            <td className="td-item" colSpan={2}>एकूण शिल्लक</td>
+            <td className="td-item" colSpan={2}>एकूण शिल्लक (Due)</td>
             <td className="td-rs">{balanceDue}</td>
             <td className="td-paise">00</td>
           </tr>
@@ -204,7 +225,8 @@ export const ThermalReceipt = ({ order, source = "billing" }: { order: any, sour
       </table>
 
       <div className="receipt-footer">
-        <div className="thank-you">{footerText}</div>
+        {orderNotes && <div className="notes">Note: {orderNotes}</div>}
+        <div className="thank-you mt-2">{footerText}</div>
         <img src="/jmm-bill-footer.png" alt="JMM Spices Footer" className="footer-image" />
       </div>
 

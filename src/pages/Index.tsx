@@ -157,7 +157,7 @@ const Index = () => {
 
   const QUICK_TILES = [
     { label: t('yearly_masala'), icon: FlaskConical, text: "text-emerald-600", bg: "bg-emerald-100", path: "/billing?action=yearly_masala" },
-    { label: "Monthly Book", icon: BookOpen, text: "text-indigo-600", bg: "bg-indigo-100", path: "/monthly-book" },
+    { label: "Monthly Book", icon: BookOpen, text: "text-indigo-600", bg: "bg-indigo-100", path: "/udhaar" },
     { label: t('ready_masala'), icon: Package, text: "text-rose-600", bg: "bg-rose-100", path: `/billing?category=${encodeURIComponent("JMM Spices")}` },
     { label: t('dryfruits'), icon: Nut, text: "text-amber-600", bg: "bg-amber-100", path: `/billing?category=${encodeURIComponent("Dryfruits")}` },
     { label: t('seeds'), icon: Scale, text: "text-blue-600", bg: "bg-blue-100", path: `/billing?category=${encodeURIComponent("Seeds")}` },

@@ -246,9 +246,16 @@ export default function Billing() {
 
   // UI Modals
   const [checkoutOpen, setCheckoutOpen] = useState(false); 
-  const [checkoutStep, setCheckoutStep] = useState(1);
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false); 
   const [scannerOpen, setScannerOpen] = useState(false);
+
+  // Auto-close checkout if cart is completely emptied while it's open
+  useEffect(() => {
+    if (cart.length === 0 && checkoutOpen) {
+      setCheckoutOpen(false);
+      setPaymentDialogOpen(false);
+    }
+  }, [cart.length, checkoutOpen]);
 
   // Custom Masala States
   const [showCustomMasala, setShowCustomMasala] = useState(false);
@@ -294,8 +301,13 @@ export default function Billing() {
   const balanceDue = Math.max(0, finalTotal - totalPaid);
 
   useEffect(() => {
-    if (balanceDue > 0 && payments.length === 0) setPaymentAmountInput(String(balanceDue));
-    else if (balanceDue === 0) setPaymentAmountInput("");
+    // Only auto-fill if the input is completely empty. This prevents the numpad from refilling 
+    // itself if the user explicitly clears it.
+    if (balanceDue > 0 && payments.length === 0 && !paymentAmountInput) {
+      setPaymentAmountInput(String(balanceDue));
+    } else if (balanceDue === 0) {
+      setPaymentAmountInput("");
+    }
   }, [balanceDue, checkoutOpen, paymentDialogOpen]);
 
   const dynamicallyScaledIngredients = useMemo(() => {
@@ -768,7 +780,6 @@ export default function Billing() {
       
       resetBill();
       setCheckoutOpen(false); 
-      setCheckoutStep(1);
       setPaymentDialogOpen(false);
     } catch (error: any) {
       toast({ title: "Transaction Failed", description: error?.message, variant: "destructive" });
@@ -929,7 +940,7 @@ export default function Billing() {
               </div>
 
               {/* HEADER CART BUTTON WITH BADGE */}
-              <Button onClick={() => { setCheckoutStep(1); setCheckoutOpen(true); }} variant="outline" className="relative h-12 rounded-xl border-zinc-200 bg-white px-3 font-semibold shadow-sm hover:bg-zinc-50 xl:hidden">
+              <Button onClick={() => setCheckoutOpen(true)} variant="outline" className="relative h-12 rounded-xl border-zinc-200 bg-white px-3 font-semibold shadow-sm hover:bg-zinc-50 xl:hidden">
                 <ShoppingCart className="h-5 w-5 text-zinc-600 sm:mr-2" />
                 <span className="hidden sm:inline">Cart</span>
                 {cart.length > 0 && (
@@ -1048,8 +1059,8 @@ export default function Billing() {
 
       {cart.length > 0 && !checkoutOpen && (
           <div className="absolute bottom-6 left-0 right-0 mx-auto w-[92%] max-w-[400px] z-40 xl:hidden animate-in fade-in slide-in-from-bottom-4">
-             <Button onClick={() => { setCheckoutStep(1); setCheckoutOpen(true); }} className="h-14 w-full rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-white font-bold shadow-xl flex items-center justify-center text-lg active:scale-95 transition-all">
-                Pay {formatCurrency(finalTotal)} <ChevronRight className="ml-2 h-5 w-5" />
+             <Button onClick={() => setCheckoutOpen(true)} className="h-14 w-full rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-white font-bold shadow-xl flex items-center justify-center text-lg active:scale-95 transition-all">
+               Pay {formatCurrency(finalTotal)} <ChevronRight className="ml-2 h-5 w-5" />
              </Button>
           </div>
         )}
@@ -1093,219 +1104,162 @@ export default function Billing() {
         </DialogContent>
       </Dialog>
 
-      {/* --- FULL-SCREEN MOBILE/IPAD STEP-WIZARD --- */}
+      {/* --- STREAMLINED 1-STEP MOBILE CHECKOUT --- */}
       {checkoutOpen && (
-        <div className="fixed inset-0 z-[100] bg-zinc-50 flex flex-col animate-in slide-in-from-right-full duration-300 xl:hidden">
-          <div className="h-14 px-4 bg-white border-b border-zinc-200 flex items-center justify-between shrink-0 shadow-sm">
+        <div className="fixed inset-0 z-[100] bg-zinc-50 flex flex-col animate-in slide-in-from-bottom-4 duration-300 xl:hidden">
+          <div className="h-16 px-5 bg-white border-b border-zinc-200 flex items-center justify-between shrink-0 shadow-sm">
             <div className="flex items-center gap-3">
-              {checkoutStep > 1 ? (
-                <button onClick={() => setCheckoutStep(p => p - 1)} className="p-2 -ml-2 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 rounded-full transition-colors active:scale-95"><ArrowLeft className="h-5 w-5" /></button>
-              ) : (
-                <button onClick={() => setCheckoutOpen(false)} className="p-2 -ml-2 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 rounded-full transition-colors active:scale-95"><X className="h-5 w-5" /></button>
-              )}
-              <div>
-                <h2 className="text-lg font-bold text-zinc-900 leading-tight">Checkout</h2>
-                <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mt-0.5">Step {checkoutStep} of 5</p>
-              </div>
+              <button onClick={() => setCheckoutOpen(false)} className="p-2 -ml-2 text-zinc-500 hover:text-zinc-900 bg-zinc-100 rounded-full transition-colors active:scale-95"><X className="h-5 w-5" /></button>
+              <h2 className="text-xl font-black text-zinc-900 leading-tight">Fast Checkout</h2>
+            </div>
+            <div className="text-right">
+              <span className="text-xs font-bold bg-zinc-100 text-zinc-600 px-3 py-1.5 rounded-lg">{cart.length} Items</span>
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4 sm:p-5">
-             {/* STEP 1: REVIEW LEDGER & ACTIVE EDITING */}
-             {checkoutStep === 1 && (
-               <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
-                  <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-zinc-200 shadow-sm">
-                    <span className="font-bold text-zinc-900 text-[15px]">Review Ledger Items</span>
-                    <span className="text-xs font-bold bg-zinc-100 px-3 py-1.5 rounded-lg text-zinc-700">{cart.length}</span>
-                  </div>
-                  <div className="bg-white border border-zinc-200 rounded-2xl shadow-sm p-4">
-                    <div className="max-h-[50vh] overflow-y-auto space-y-4 pr-2">
-                      {cart.map(item => (
-                        <div key={item.cartId} className="flex flex-col gap-2 text-sm pb-4 border-b border-zinc-100 last:border-0 last:pb-0">
-                          <div className="flex justify-between items-start">
-                            <div className="flex-1 pr-3">
-                              <span className="font-bold text-zinc-800 leading-tight block">{getSafeItemName(item)}</span>
-                              <div className="text-[11px] font-bold text-zinc-500 mt-1">{formatCurrency(item.selling_price || 0)} / {getItemDisplayUnit(item)}</div>
-                            </div>
-                            <span className="font-bold text-zinc-900 text-[15px]">{formatCurrency(item.cartQuantity * Number(item.selling_price || 0))}</span>
-                          </div>
-                          
-                          <div className="flex items-center justify-between mt-1">
-                            <div className="flex items-center rounded-lg border border-zinc-200 bg-zinc-50 h-9">
-                              <button type="button" onClick={() => updateCartQuantity(item.cartId, item.cartQuantity - 1)} className="flex h-full w-9 items-center justify-center text-zinc-600 hover:bg-zinc-100"><Minus className="h-4 w-4" /></button>
-                              <span className="min-w-[2.5rem] text-center text-[13px] font-bold text-zinc-900">{item.cartQuantity}</span>
-                              <button type="button" onClick={() => updateCartQuantity(item.cartId, item.cartQuantity + 1)} className="flex h-full w-9 items-center justify-center text-zinc-600 hover:bg-zinc-100"><Plus className="h-4 w-4" /></button>
-                            </div>
-                            <button onClick={() => removeCartItem(item.cartId)} className="flex items-center justify-center h-9 w-9 rounded-md text-zinc-400 hover:text-rose-500 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>
+          <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+
+            {/* 1. CART ITEMS REVIEW */}
+            <div className="bg-white p-5 rounded-[24px] border border-zinc-200 shadow-sm">
+              <div className="flex justify-between items-center mb-4">
+                 <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">Ledger Items</Label>
+                 <span className="text-xs font-bold text-zinc-700 bg-zinc-100 px-2.5 py-1 rounded-lg">{cart.length}</span>
+              </div>
+              <div className="max-h-[35vh] overflow-y-auto space-y-3 pr-1">
+                 {cart.map(item => (
+                   <div key={item.cartId} className="flex flex-col gap-2 pb-3 border-b border-zinc-100 last:border-0 last:pb-0">
+                     <div className="flex justify-between items-start">
+                       <div className="flex-1 pr-3">
+                         <span className="font-bold text-zinc-800 leading-tight block">{getSafeItemName(item)}</span>
+                         <div className="text-[11px] font-bold text-zinc-500 mt-1">{formatCurrency(item.selling_price || 0)} / {getItemDisplayUnit(item)}</div>
+                       </div>
+                       <span className="font-bold text-zinc-900 text-[15px]">{formatCurrency(item.cartQuantity * Number(item.selling_price || 0))}</span>
+                     </div>
+                     <div className="flex items-center justify-between mt-1">
+                       <div className="flex items-center rounded-lg border border-zinc-200 bg-zinc-50 h-9">
+                         <button type="button" onClick={() => updateCartQuantity(item.cartId, item.cartQuantity - 1)} className="flex h-full w-9 items-center justify-center text-zinc-600 hover:bg-zinc-100"><Minus className="h-4 w-4" /></button>
+                         <span className="min-w-[2.5rem] text-center text-[13px] font-bold text-zinc-900">{item.cartQuantity}</span>
+                         <button type="button" onClick={() => updateCartQuantity(item.cartId, item.cartQuantity + 1)} className="flex h-full w-9 items-center justify-center text-zinc-600 hover:bg-zinc-100"><Plus className="h-4 w-4" /></button>
+                       </div>
+                       <button onClick={() => removeCartItem(item.cartId)} className="flex items-center justify-center h-9 w-9 rounded-md text-zinc-400 hover:text-rose-500 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>
+                     </div>
+                   </div>
+                 ))}
+              </div>
+            </div>
+            
+            {/* 2. BIG TOTAL & PAYMENTS */}
+            <div className="bg-white p-5 rounded-[24px] border border-zinc-200 shadow-sm space-y-5">
+              <div className="text-center pb-4 border-b border-zinc-100">
+                <p className="text-[11px] font-bold uppercase tracking-widest text-zinc-400 mb-1">Amount Due</p>
+                <p className="text-5xl font-black tracking-tight text-zinc-900">{formatCurrency(balanceDue)}</p>
+                {totalPaid > 0 && <p className="text-sm font-bold text-emerald-600 mt-3 bg-emerald-50 inline-block px-4 py-1.5 rounded-xl border border-emerald-100">Paid: {formatCurrency(totalPaid)}</p>}
+              </div>
+
+              <div className="space-y-3">
+                 <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Record Payment</Label>
+                 <div className="flex gap-2 p-1 bg-zinc-100/80 border border-zinc-200 rounded-xl shadow-inner">
+                   {["CASH", "UPI", "CARD"].map(m => (
+                     <button key={m} onClick={() => setPaymentMethodInput(m as PaymentMethod)} className={`flex-1 h-12 rounded-lg text-sm font-bold transition-all ${paymentMethodInput === m ? 'bg-white text-zinc-900 shadow-sm border border-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}>{m}</button>
+                   ))}
+                 </div>
+                 
+                 <div className="flex gap-3">
+                   <button onClick={() => setNumpadConfig({isOpen: true, title: "Payment Amount", value: "", allowDecimal: true, onConfirm: (v) => setPaymentAmountInput(String(v))})} className="h-14 flex-1 rounded-2xl border border-zinc-200 bg-white text-left px-4 text-[16px] font-bold text-zinc-900 shadow-sm flex items-center hover:bg-zinc-50 transition-colors">
+                     {paymentAmountInput ? `₹ ${paymentAmountInput}` : "Enter Amount"}
+                   </button>
+                   <Button onClick={addPayment} className="h-14 px-6 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[15px] shadow-sm active:scale-95 transition-all">Record</Button>
+                 </div>
+                 
+                 {balanceDue > 0 && (
+                   <div className="flex gap-2 overflow-x-auto scrollbar-none pt-1 pb-1">
+                     <button onClick={() => setPaymentAmountInput(String(balanceDue))} className="px-4 py-3 bg-white border border-zinc-200 rounded-xl text-xs font-bold shadow-sm active:scale-95 text-zinc-700 whitespace-nowrap">Full Pay</button>
+                     <button onClick={() => setNumpadConfig({isOpen: true, title: "Enter CASH Received (Rest is UPI)", value: "", allowDecimal: true, onConfirm: handleSmartSplit})} className="px-4 py-3 bg-white border border-zinc-200 rounded-xl text-xs font-bold shadow-sm active:scale-95 text-zinc-700 whitespace-nowrap">Split (Cash + UPI)</button>
+                     <button onClick={() => { setPayments([]); setPaymentAmountInput(""); }} className="px-4 py-3 bg-rose-50 border border-rose-200 rounded-xl text-xs font-bold text-rose-700 shadow-sm active:scale-95 whitespace-nowrap">Udhaar (0 Pay)</button>
+                     <button 
+                       onClick={() => setNumpadConfig({
+                         isOpen: true, 
+                         title: "Enter Advance Amount", 
+                         value: "", 
+                         allowDecimal: true, 
+                         onConfirm: (v) => setPaymentAmountInput(String(v))
+                       })} 
+                       className="px-3 py-2 sm:px-4 sm:py-3 bg-blue-50 border border-blue-200 rounded-xl text-xs font-bold text-blue-700 shadow-sm active:scale-95 whitespace-nowrap"
+                     >
+                       Advance (Custom)
+                     </button>
+                   </div>
+                 )}
+
+                 {payments.length > 0 && (
+                    <div className="pt-3 border-t border-zinc-100 space-y-2">
+                      {payments.map(p => (
+                        <div key={p.id} className="flex justify-between items-center bg-zinc-50 p-3.5 rounded-2xl border border-zinc-200 shadow-sm">
+                          <span className="font-bold text-zinc-800 text-[13px]">{p.method}</span>
+                          <div className="flex items-center gap-4">
+                            <span className="font-bold text-emerald-600 text-[15px]">{formatCurrency(p.amount)}</span>
+                            <button onClick={() => removePayment(p.id)} className="text-zinc-400 hover:text-rose-500 hover:bg-white p-2 rounded-xl transition-colors"><Trash2 className="h-4 w-4" /></button>
                           </div>
                         </div>
                       ))}
                     </div>
-                  </div>
-                  <Button variant="outline" onClick={() => setCheckoutOpen(false)} className="w-full h-14 rounded-2xl font-bold border-dashed border-2 border-zinc-300 text-zinc-600 hover:bg-zinc-50 shadow-none text-[15px]">+ Add More Items</Button>
-               </div>
-             )}
+                 )}
+              </div>
+            </div>
 
-             {/* STEP 2: ORDER SETTINGS */}
-             {checkoutStep === 2 && (
-               <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
-                  <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Order Settings</Label>
-                  <div className="space-y-5 bg-white p-5 rounded-[24px] border border-zinc-200 shadow-sm">
-                    <div>
-                      <Label className="text-[13px] font-bold text-zinc-800 mb-2 block">Order Mode</Label>
-                      <div className="flex gap-2 p-1 bg-zinc-100/80 border border-zinc-200 rounded-xl shadow-inner">
-                        {["WALK_IN", "MONTHLY", "ONLINE"].map(m => (
-                          <button key={m} onClick={() => setOrderMode(m)} className={`flex-1 h-10 rounded-lg text-xs font-bold transition-all ${orderMode === m ? 'bg-white text-zinc-900 shadow-sm border border-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}>{m.replace('_', ' ')}</button>
-                        ))}
-                      </div>
-                    </div>
-                    <div>
-                      <Label className="text-[13px] font-bold text-zinc-800 mb-2 block">Order Number</Label>
-                      <div className="relative">
-                        <Receipt className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                        <Input value={orderNumber} onChange={e => setOrderNumber(e.target.value)} className="h-14 pl-11 text-[16px] rounded-2xl font-bold bg-zinc-50 border-zinc-200 shadow-inner" />
-                      </div>
-                    </div>
-                    <div>
-                      <Label className="text-[13px] font-bold text-zinc-800 mb-2 block">Order Notes</Label>
-                      <div className="relative">
-                        <NotebookPen className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                        <Input value={orderNotes} onChange={e => setOrderNotes(e.target.value)} placeholder="Add remarks or instructions..." className="h-14 pl-11 text-[16px] rounded-2xl font-bold bg-zinc-50 border-zinc-200 shadow-inner" />
-                      </div>
-                    </div>
-                    <div>
-                      <Label className="text-[13px] font-bold text-zinc-800 mb-2 block">Delivery Schedule</Label>
-                      <div className="flex gap-2">
-                         <button onClick={() => setDeliveryDate("")} className={`flex-1 h-14 rounded-2xl text-[15px] font-bold border transition-all active:scale-95 ${!deliveryDate ? 'bg-zinc-900 text-white border-zinc-900 shadow-md' : 'bg-zinc-50 text-zinc-600 border-zinc-200 shadow-inner'}`}>Instant (Today)</button>
-                         <button onClick={() => setDeliveryDate(new Date().toISOString().split('T')[0])} className={`flex-1 h-14 rounded-2xl text-[15px] font-bold border transition-all active:scale-95 ${deliveryDate ? 'bg-zinc-900 text-white border-zinc-900 shadow-md' : 'bg-zinc-50 text-zinc-600 border-zinc-200 shadow-inner'}`}>Custom Date</button>
-                      </div>
-                      {deliveryDate && (
-                        <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className="h-14 mt-3 rounded-2xl font-bold bg-zinc-50 text-[16px] border-zinc-200 shadow-inner px-4" />
-                      )}
-                    </div>
-                  </div>
+            {/* 3. CUSTOMER CRM (Optional) */}
+            <div className="bg-white p-5 rounded-[24px] border border-zinc-200 shadow-sm space-y-4">
+               <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Customer Details (Optional)</Label>
+               <div className="relative">
+                 <Phone className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                 <button onClick={() => setNumpadConfig({isOpen: true, title: "Customer Phone", value: customerPhone, allowDecimal: false, onConfirm: (v) => handlePhoneChange(v)})} className="h-14 w-full pl-11 text-left text-[16px] rounded-2xl font-bold bg-zinc-50 border border-zinc-200 shadow-inner flex items-center hover:bg-zinc-100 transition-colors">
+                   {customerPhone || <span className="text-zinc-400 font-medium">Enter 10-digit number</span>}
+                 </button>
                </div>
-             )}
+               {customerPhone.length >= 10 && (
+                 <div className="relative mt-2 animate-in fade-in slide-in-from-top-2 space-y-3">
+                   <div className="relative">
+                     <UserRound className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                     <Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Customer Name" className="h-14 pl-11 text-[16px] rounded-2xl font-bold bg-zinc-50 border-zinc-200 shadow-inner" />
+                   </div>
+                   <div className="relative">
+                     <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                     <Input value={customerAddress} onChange={e => setCustomerAddress(e.target.value)} placeholder="Delivery Address" className="h-14 pl-11 text-[16px] rounded-2xl font-bold bg-zinc-50 border-zinc-200 shadow-inner" />
+                   </div>
+                 </div>
+               )}
+            </div>
 
-             {/* STEP 3: CUSTOMER CRM */}
-             {checkoutStep === 3 && (
-               <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
-                  <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Customer CRM (Optional)</Label>
-                  <div className="space-y-5 bg-white p-5 rounded-[24px] border border-zinc-200 shadow-sm">
-                    <div>
-                      <Label className="text-[13px] font-bold text-zinc-800 mb-2 block">Phone Number</Label>
-                      <div className="relative">
-                        <Phone className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                        <button onClick={() => setNumpadConfig({isOpen: true, title: "Customer Phone", value: customerPhone, allowDecimal: false, onConfirm: (v) => handlePhoneChange(v)})} className="h-14 w-full pl-11 text-left text-[16px] rounded-2xl font-bold bg-zinc-50 border border-zinc-200 shadow-inner flex items-center hover:bg-zinc-100 transition-colors">
-                           {customerPhone || <span className="text-zinc-400 font-medium">Enter 10-digit number</span>}
-                        </button>
-                      </div>
-                    </div>
-                    {customerPhone.length >= 10 && (
-                      <div className="relative mt-2 animate-in fade-in slide-in-from-top-2 space-y-3">
-                        <div className="relative">
-                          <UserRound className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                          <Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Customer Name" className="h-14 pl-11 text-[16px] rounded-2xl font-bold bg-zinc-50 border-zinc-200 shadow-inner" />
-                        </div>
-                        <div className="relative">
-                          <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                          <Input value={customerAddress} onChange={e => setCustomerAddress(e.target.value)} placeholder="Delivery Address" className="h-14 pl-11 text-[16px] rounded-2xl font-bold bg-zinc-50 border-zinc-200 shadow-inner" />
-                        </div>
-                      </div>
-                    )}
-                  </div>
+            {/* 4. ORDER SETTINGS (Optional) */}
+            <div className="bg-white p-5 rounded-[24px] border border-zinc-200 shadow-sm space-y-4">
+               <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Order Details</Label>
+               <div className="flex gap-2">
+                 <div className="relative flex-1">
+                   <Receipt className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                   <Input value={orderNumber} onChange={e => setOrderNumber(e.target.value)} className="h-14 pl-11 text-[16px] rounded-2xl font-bold bg-zinc-50 border-zinc-200 shadow-inner" placeholder="Order No."/>
+                 </div>
+                 <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className="h-14 w-[130px] rounded-2xl font-bold bg-zinc-50 text-[15px] border-zinc-200 shadow-inner px-3" />
                </div>
-             )}
-
-             {/* STEP 4: PAYMENT SPLIT (Smart Calculator) */}
-             {checkoutStep === 4 && (
-               <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
-                  <div className="flex justify-between items-center px-1">
-                    <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">Payment Split</Label>
-                    <span className="text-[11px] font-bold text-rose-600 bg-rose-50 border border-rose-100 px-3 py-1.5 rounded-lg shadow-sm">Pending: {formatCurrency(balanceDue)}</span>
-                  </div>
-                  <div className="bg-white p-5 rounded-[24px] border border-zinc-200 shadow-sm space-y-5">
-                    
-                    <div className="space-y-2">
-                      <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Payment Method</Label>
-                      <div className="flex gap-2 p-1 bg-zinc-100/80 border border-zinc-200 rounded-2xl">
-                        {["CASH", "UPI", "CARD"].map(m => (
-                          <button key={m} onClick={() => setPaymentMethodInput(m as PaymentMethod)} className={`flex-1 h-12 rounded-xl text-sm font-bold transition-all ${paymentMethodInput === m ? 'bg-white text-zinc-900 shadow-sm border border-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}>{m}</button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Amount Received</Label>
-                      <div className="flex gap-3">
-                        <button onClick={() => setNumpadConfig({isOpen: true, title: "Payment Amount", value: paymentAmountInput, allowDecimal: true, onConfirm: (v) => setPaymentAmountInput(String(v))})} className="h-14 flex-1 rounded-2xl border border-zinc-200 bg-white text-left px-4 text-[16px] font-bold text-zinc-900 shadow-sm flex items-center hover:bg-zinc-50 transition-colors">
-                          {paymentAmountInput ? `₹ ${paymentAmountInput}` : "Enter Amount"}
-                        </button>
-                        <Button onClick={addPayment} className="h-14 px-6 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[15px] shadow-sm active:scale-95 transition-all">Record</Button>
-                      </div>
-                    </div>
-                    
-                    {balanceDue > 0 && (
-                      <div className="flex gap-2 overflow-x-auto scrollbar-none pt-1 pb-1">
-                        <button onClick={() => setPaymentAmountInput(String(balanceDue))} className="px-4 py-3 bg-white border border-zinc-200 rounded-xl text-xs font-bold shadow-sm active:scale-95 text-zinc-700 whitespace-nowrap">Full Pay</button>
-                        <button onClick={() => setNumpadConfig({isOpen: true, title: "Enter CASH Received (Rest is UPI)", value: "", allowDecimal: true, onConfirm: handleSmartSplit})} className="px-4 py-3 bg-white border border-zinc-200 rounded-xl text-xs font-bold shadow-sm active:scale-95 text-zinc-700 whitespace-nowrap">
-                           Split (Cash + UPI)
-                        </button>
-                        <button onClick={() => { setPayments([]); setPaymentAmountInput(""); }} className="px-4 py-3 bg-rose-50 border border-rose-200 rounded-xl text-xs font-bold text-rose-700 shadow-sm active:scale-95 whitespace-nowrap">Udhaar (0 Pay)</button>
-                      </div>
-                    )}
-                    
-                    {payments.length > 0 && (
-                      <div className="pt-3 border-t border-zinc-100 space-y-2">
-                        {payments.map(p => (
-                          <div key={p.id} className="flex justify-between items-center bg-zinc-50 p-3.5 rounded-2xl border border-zinc-200 shadow-sm">
-                            <span className="font-bold text-zinc-800 text-[13px]">{p.method}</span>
-                            <div className="flex items-center gap-4">
-                              <span className="font-bold text-emerald-600 text-[15px]">{formatCurrency(p.amount)}</span>
-                              <button onClick={() => removePayment(p.id)} className="text-zinc-400 hover:text-rose-500 hover:bg-white p-2 rounded-xl transition-colors"><Trash2 className="h-4 w-4" /></button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+               <div className="relative">
+                 <NotebookPen className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                 <Input value={orderNotes} onChange={e => setOrderNotes(e.target.value)} placeholder="Add remarks or instructions..." className="h-14 pl-11 text-[16px] rounded-2xl font-bold bg-zinc-50 border-zinc-200 shadow-inner" />
                </div>
-             )}
-
-             {/* STEP 5: FINAL COMPLETE */}
-             {checkoutStep === 5 && (
-               <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
-                  <div className="text-center bg-white border border-zinc-200 p-8 rounded-[32px] shadow-sm">
-                     <p className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5">Final Amount</p>
-                     <p className="text-5xl font-bold tracking-tight text-zinc-900">{formatCurrency(finalTotal)}</p>
-                     <div className="mt-4 flex justify-center gap-2">
-                       {totalPaid > 0 && <span className="text-[13px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 py-1.5 px-4 rounded-xl shadow-sm">Paid: {formatCurrency(totalPaid)}</span>}
-                       {balanceDue > 0 && <span className="text-[13px] font-bold text-rose-700 bg-rose-50 border border-rose-200 py-1.5 px-4 rounded-xl shadow-sm">Due: {formatCurrency(balanceDue)}</span>}
-                     </div>
-                  </div>
-                  <div className="bg-white border border-zinc-200 rounded-[24px] p-5 text-[15px] font-semibold space-y-3 shadow-sm">
-                     <div className="flex justify-between items-center pb-3 border-b border-zinc-50"><span className="text-zinc-500">Order</span><span className="text-zinc-900 font-bold bg-zinc-50 px-2.5 py-1 rounded-lg border border-zinc-100">{orderNumber}</span></div>
-                     <div className="flex justify-between items-center pb-3 border-b border-zinc-50"><span className="text-zinc-500">Items</span><span className="text-zinc-900 font-bold">{cart.length} Units</span></div>
-                     <div className="flex justify-between items-center pb-3 border-b border-zinc-50"><span className="text-zinc-500">Customer</span><span className="text-zinc-900 font-bold">{customerName || customerPhone || "Walk-in"}</span></div>
-                     <div className="flex justify-between items-center"><span className="text-zinc-500">Delivery</span><span className="text-zinc-900 font-bold">{deliveryDate ? new Date(deliveryDate).toLocaleDateString('en-IN') : 'Instant (Today)'}</span></div>
-                  </div>
+               <div className="flex gap-2 p-1 bg-zinc-100/80 border border-zinc-200 rounded-xl shadow-inner mt-2">
+                 {["WALK_IN", "MONTHLY", "ONLINE"].map(m => (
+                   <button key={m} onClick={() => setOrderMode(m)} className={`flex-1 h-10 rounded-lg text-xs font-bold transition-all ${orderMode === m ? 'bg-white text-zinc-900 shadow-sm border border-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}>{m.replace('_', ' ')}</button>
+                 ))}
                </div>
-             )}
+            </div>
           </div>
           
+          {/* 5. STICKY COMPLETE BUTTON */}
           <div className="p-4 sm:p-5 border-t border-zinc-200 bg-white shrink-0 pb-safe shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
-             <div className="max-w-[500px] mx-auto">
-               {checkoutStep === 1 && <Button onClick={() => setCheckoutStep(2)} className="h-14 w-full rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-lg active:scale-95 transition-all">Confirm Ledger <ChevronRight className="ml-2 h-5 w-5" /></Button>}
-               {checkoutStep === 2 && <Button onClick={() => setCheckoutStep(3)} className="h-14 w-full rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-lg active:scale-95 transition-all">Confirm Details <ChevronRight className="ml-2 h-5 w-5" /></Button>}
-               {checkoutStep === 3 && <Button onClick={() => setCheckoutStep(4)} className="h-14 w-full rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-lg active:scale-95 transition-all">Confirm CRM <ChevronRight className="ml-2 h-5 w-5" /></Button>}
-               {checkoutStep === 4 && <Button disabled={balanceDue > 0 && !customerPhone} onClick={() => setCheckoutStep(5)} className="h-14 w-full rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-lg active:scale-95 transition-all">Review Payment <ChevronRight className="ml-2 h-5 w-5" /></Button>}
-               
-               {checkoutStep === 5 && <Button disabled={isProcessing} onClick={createOrder} className="h-14 w-full rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-lg shadow-[0_4px_15px_rgba(16,185,129,0.25)] active:scale-[0.98] transition-transform">{isProcessing ? "Processing..." : "Complete Transaction"}</Button>}
-               
-               {checkoutStep === 4 && balanceDue > 0 && !customerPhone && (
-                 <p className="text-[10px] text-center text-rose-500 font-bold mt-3 uppercase tracking-widest">Customer phone required for pending balance</p>
-               )}
-             </div>
+            <Button disabled={isProcessing || (balanceDue > 0 && !customerPhone)} onClick={createOrder} className="h-14 w-full rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-lg shadow-[0_4px_15px_rgba(16,185,129,0.25)] active:scale-[0.98] transition-transform">
+              {isProcessing ? "Processing..." : balanceDue > 0 ? `Save Order — ${formatCurrency(balanceDue)} Due` : "Complete Transaction"}
+            </Button>
+            {balanceDue > 0 && !customerPhone && (
+              <p className="text-[10px] text-center text-rose-500 font-bold mt-3 uppercase tracking-widest">Customer phone required for pending balance</p>
+            )}
           </div>
         </div>
       )}
@@ -1386,7 +1340,7 @@ export default function Billing() {
                 </div>
 
                 <div className="flex gap-3">
-                  <button onClick={() => setNumpadConfig({isOpen: true, title: "Payment Amount", value: paymentAmountInput, allowDecimal: true, onConfirm: (v) => setPaymentAmountInput(String(v))})} className="h-12 flex-1 rounded-xl border border-zinc-200 bg-white text-left px-3 text-[16px] font-bold text-zinc-900 shadow-sm flex items-center hover:bg-zinc-50">
+                  <button onClick={() => setNumpadConfig({isOpen: true, title: "Payment Amount", value: "", allowDecimal: true, onConfirm: (v) => setPaymentAmountInput(String(v))})} className="h-12 flex-1 rounded-xl border border-zinc-200 bg-white text-left px-3 text-[16px] font-bold text-zinc-900 shadow-sm flex items-center hover:bg-zinc-50">
                     {paymentAmountInput ? `₹ ${paymentAmountInput}` : "Enter Amount"}
                   </button>
                   <Button onClick={addPayment} className="h-12 px-6 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-sm active:scale-95">Record</Button>
@@ -1397,6 +1351,18 @@ export default function Billing() {
                     <button onClick={() => setPaymentAmountInput(String(balanceDue))} className="px-3 py-2 bg-white border border-zinc-200 rounded-lg text-xs font-bold shadow-sm active:scale-95 whitespace-nowrap">Full Pay</button>
                     <button onClick={() => setNumpadConfig({isOpen: true, title: "Enter CASH Received (Rest is UPI)", value: "", allowDecimal: true, onConfirm: handleSmartSplit})} className="px-3 py-2 bg-white border border-zinc-200 rounded-lg text-xs font-bold shadow-sm active:scale-95 whitespace-nowrap text-zinc-700">Split (Cash + UPI)</button>
                     <button onClick={() => { setPayments([]); setPaymentAmountInput(""); }} className="px-3 py-2 bg-rose-50 border border-rose-200 rounded-lg text-xs font-bold text-rose-700 shadow-sm active:scale-95 whitespace-nowrap">Udhaar (0 Pay)</button>
+                    <button 
+                      onClick={() => setNumpadConfig({
+                        isOpen: true, 
+                        title: "Enter Advance Amount", 
+                        value: "", 
+                        allowDecimal: true, 
+                        onConfirm: (v) => setPaymentAmountInput(String(v))
+                      })} 
+                      className="px-3 py-2 sm:px-4 sm:py-3 bg-blue-50 border border-blue-200 rounded-xl text-xs font-bold text-blue-700 shadow-sm active:scale-95 whitespace-nowrap"
+                    >
+                      Advance (Custom)
+                    </button>
                   </div>
                 )}
 

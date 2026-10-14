@@ -12,7 +12,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
-  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
+  Dialog, DialogContent, DialogTitle, DialogFooter, DialogHeader
 } from "@/components/ui/dialog";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogTitle,
@@ -24,12 +24,11 @@ import type { Database } from "@/lib/supabase";
 import { 
   Search, Pencil, Trash2, Printer, Loader2, Package, 
   AlertTriangle, Image as ImageIcon, Globe, UploadCloud,
-  Scale, Wrench, Layers, FlaskConical, Plus
+  Scale, Wrench, Layers, FlaskConical, Plus, X
 } from "lucide-react";
 
 export type Item = Database["public"]["Tables"]["items"]["Row"];
 
-// EXACT SEQUENCE BASED ON JMM PHYSICAL BILL BOOK
 const STRICT_MASALA_SEQUENCE = [
   "बेडगी", "लवंगी", "काश्मिरी", "मिरची", "धणे", "हळकुंड", "मिरी", "बडीशेप", 
   "खसखस", "लवंग", "दालचिनी", "लालफुल", "चक्रिफुल", "मसाला वेलची", "दगडफुल", 
@@ -80,6 +79,10 @@ const editSchema = z.object({
   number_of_boxes: z.coerce.number().min(0).default(0).optional(),
   price_per_piece: z.coerce.number().min(0).optional(),
   show_on_web: z.boolean().default(true),
+  quick_weights: z.string().optional(),
+  description: z.string().optional(),
+  max_order_qty: z.coerce.number().min(1).default(10),
+  product_tags: z.string().optional(),
 });
 
 type EditFormData = z.infer<typeof editSchema>;
@@ -131,12 +134,11 @@ export default function ManageInventory() {
   const [printingItem, setPrintingItem] = useState<Item | null>(null); 
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
-  // Template Editing States
   const [editingTemplate, setEditingTemplate] = useState<MasalaTemplate | { id: 'new', template_name: '', template_ingredients: [] } | null>(null);
   const [tempIngredients, setTempIngredients] = useState<TempIngredient[]>([]);
+  const [activeIngredientIds, setActiveIngredientIds] = useState<number[]>([]);
   const [isSubmittingTemplate, setIsSubmittingTemplate] = useState(false);
   
-  // Photo Edit States
   const [editImageFile, setEditImageFile] = useState<File | null>(null);
   const [editImagePreview, setEditImagePreview] = useState<string | null>(null);
   const [removeImageFlag, setRemoveImageFlag] = useState(false);
@@ -144,7 +146,7 @@ export default function ManageInventory() {
 
   const { register, handleSubmit, reset, control, setValue, formState: { errors, isSubmitting } } = useForm<EditFormData>({
     resolver: zodResolver(editSchema),
-    defaultValues: { is_pack: false, pieces_per_box: 1, quantity: 0, show_on_web: true }
+    defaultValues: { is_pack: false, pieces_per_box: 1, quantity: 0, show_on_web: true, quick_weights: "", max_order_qty: 10 }
   });
 
   const watchedIsPack = useWatch({ control, name: "is_pack" });
@@ -152,7 +154,6 @@ export default function ManageInventory() {
   const watchedBoxes = useWatch({ control, name: "number_of_boxes" });
   const watchedShowOnWeb = useWatch({ control, name: "show_on_web" });
 
-  // Compute strictly sorted raw materials once
   const sortedRawMaterials = useMemo(() => {
     return [...rawMaterials].sort((a, b) => {
       let idxA = STRICT_MASALA_SEQUENCE.findIndex(seq => getSafeItemName(a).includes(seq));
@@ -213,6 +214,9 @@ export default function ManageInventory() {
       setEditImageFile(null);
       setRemoveImageFlag(false);
 
+      const quickWeightsArray = (editingItem as any).quick_weights;
+      const quickWeightsStr = Array.isArray(quickWeightsArray) ? quickWeightsArray.join(', ') : "";
+
       reset({
         item_name: editingItem.item_name,
         size: editingItem.size || '',
@@ -224,6 +228,10 @@ export default function ManageInventory() {
         number_of_boxes: estimatedBoxes,
         price_per_piece: Number(editingItem.price_per_piece || 0),
         show_on_web: editingItem.show_on_web ?? true,
+        quick_weights: quickWeightsStr,
+        description: (editingItem as any).description || "",
+        max_order_qty: Number((editingItem as any).max_order_qty || 10),
+        product_tags: ((editingItem as any).product_tags || []).join(', '),
       });
     }
   }, [editingItem, reset]);
@@ -289,6 +297,17 @@ export default function ManageInventory() {
         finalImageUrl = publicUrlData.publicUrl;
       }
       
+      let parsedQuickWeights = null;
+      if (data.quick_weights && data.quick_weights.trim() !== "") {
+        const arr = data.quick_weights.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n) && n > 0);
+        if (arr.length > 0) parsedQuickWeights = arr;
+      }
+
+      let parsedTags: string[] = [];
+      if (data.product_tags && data.product_tags.trim() !== "") {
+        parsedTags = data.product_tags.split(',').map(s => s.trim()).filter(Boolean);
+      }
+
       const { error } = await (supabase as any)
         .from("items")
         .update({
@@ -300,7 +319,11 @@ export default function ManageInventory() {
           pieces_per_box: isPack ? data.pieces_per_box : 1,
           price_per_piece: isPack ? data.price_per_piece : data.selling_price,
           show_on_web: data.show_on_web,
-          image_url: finalImageUrl
+          image_url: finalImageUrl,
+          quick_weights: parsedQuickWeights,
+          description: data.description || null,
+          max_order_qty: data.max_order_qty,
+          product_tags: parsedTags
         })
         .eq("id", editingItem.id)
         .eq("tenant_id", currentTenantId);
@@ -344,9 +367,7 @@ export default function ManageInventory() {
     }
   };
 
-  // --- STRICT SEQUENCE TEMPLATE MANAGEMENT ---
   const openTemplateEditor = (template: MasalaTemplate | 'new') => {
-    // 1. Build the base array of all strict ingredients (qty = 0)
     const baseIngredients: TempIngredient[] = sortedRawMaterials.map(rm => ({
         item_id: rm.id,
         item_name: getSafeItemName(rm),
@@ -357,27 +378,35 @@ export default function ManageInventory() {
     if (template === 'new') {
       setEditingTemplate({ id: 'new', template_name: '', template_ingredients: [] });
       setTempIngredients(baseIngredients);
+      setActiveIngredientIds([]);
     } else {
       setEditingTemplate(template);
-      
-      // 2. Map existing saved quantities over the strict base ingredients
       const existingMap = new Map<number, { qty: number, unit: string }>();
+      const activeIds: number[] = [];
       for (const ing of template.template_ingredients) {
-        existingMap.set(ing.item_id, { qty: Number(ing.base_qty), unit: ing.unit });
+        if (Number(ing.base_qty) > 0) {
+          existingMap.set(ing.item_id, { qty: Number(ing.base_qty), unit: ing.unit });
+          activeIds.push(ing.item_id);
+        }
       }
-
       const mergedIngredients = baseIngredients.map(base => ({
           ...base,
           qty: existingMap.has(base.item_id) ? existingMap.get(base.item_id)!.qty : 0,
           unit: existingMap.has(base.item_id) ? existingMap.get(base.item_id)!.unit : base.unit
       }));
-      
       setTempIngredients(mergedIngredients);
+      setActiveIngredientIds(activeIds);
     }
   };
 
   const updateCustomIngredient = (itemId: number, quantity: number) => {
     setTempIngredients(prev => prev.map(ing => ing.item_id === itemId ? { ...ing, qty: quantity } : ing));
+  };
+
+  const handleAddSpice = (itemId: number) => setActiveIngredientIds(prev => [...prev, itemId]);
+  const handleRemoveSpice = (itemId: number) => {
+    setActiveIngredientIds(prev => prev.filter(id => id !== itemId));
+    updateCustomIngredient(itemId, 0); 
   };
 
   const saveTemplate = async () => {
@@ -402,57 +431,42 @@ export default function ManageInventory() {
         if (error) throw error;
       }
 
-      const { data: existingRows } = await (supabase as any)
-        .from("template_ingredients")
-        .select("id, item_id")
-        .eq("template_id", targetTemplateId);
+      const { data: existingRows } = await (supabase as any).from("template_ingredients").select("id, item_id").eq("template_id", targetTemplateId);
 
       const toInsert: any[] = [];
       const toUpdate: any[] = [];
       const idsToDelete: string[] = [];
-
-      const existingMap = new Map<number, string>();
+      const existingMap = new Map<number, string>(); 
       
       if (existingRows) {
         for (const row of existingRows) {
-          if (!existingMap.has(row.item_id)) {
-            existingMap.set(row.item_id, row.id);
-          } else {
-            idsToDelete.push(row.id); 
-          }
+          if (!existingMap.has(row.item_id)) existingMap.set(row.item_id, row.id);
+          else idsToDelete.push(row.id); 
         }
       }
 
       for (const ing of tempIngredients) {
-        // We save ALL items, even if qty is 0, as per strict physical bill book requirements.
+        const isActiveAndValid = activeIngredientIds.includes(ing.item_id) && ing.qty > 0;
         if (existingMap.has(ing.item_id)) {
-          toUpdate.push({
-            id: existingMap.get(ing.item_id), 
-            tenant_id: currentTenantId,
-            template_id: targetTemplateId,
-            item_id: ing.item_id,
-            base_qty: ing.qty,
-            unit: ing.unit
-          });
+          if (isActiveAndValid) {
+            toUpdate.push({
+              id: existingMap.get(ing.item_id), 
+              tenant_id: currentTenantId, template_id: targetTemplateId, item_id: ing.item_id, base_qty: ing.qty, unit: ing.unit
+            });
+          } else {
+            idsToDelete.push(existingMap.get(ing.item_id)!);
+          }
           existingMap.delete(ing.item_id); 
-        } else {
+        } else if (isActiveAndValid) {
           toInsert.push({
-            tenant_id: currentTenantId,
-            template_id: targetTemplateId,
-            item_id: ing.item_id,
-            base_qty: ing.qty,
-            unit: ing.unit
+            tenant_id: currentTenantId, template_id: targetTemplateId, item_id: ing.item_id, base_qty: ing.qty, unit: ing.unit
           });
         }
       }
 
-      for (const removedId of existingMap.values()) {
-        idsToDelete.push(removedId);
-      }
+      for (const removedId of existingMap.values()) idsToDelete.push(removedId);
 
-      if (idsToDelete.length > 0) {
-        await (supabase as any).from("template_ingredients").delete().in("id", idsToDelete);
-      }
+      if (idsToDelete.length > 0) await (supabase as any).from("template_ingredients").delete().in("id", idsToDelete);
       if (toUpdate.length > 0) {
         const { error: upError } = await (supabase as any).from("template_ingredients").upsert(toUpdate);
         if (upError) throw upError;
@@ -467,19 +481,20 @@ export default function ManageInventory() {
       fetchTemplates(currentTenantId);
 
     } catch (err: any) {
-      console.error(err);
       toast({ title: "Failed to save recipe", description: err.message, variant: "destructive" });
     } finally {
       setIsSubmittingTemplate(false);
     }
   };
 
+  const activeSpices = tempIngredients.filter(ing => activeIngredientIds.includes(ing.item_id));
+  const availableSpices = tempIngredients.filter(ing => !activeIngredientIds.includes(ing.item_id));
+
   return (
     <AppLayout>
       <div className="w-full bg-[#fcfcfd] min-h-screen">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6 sm:space-y-8 animate-fade-in pb-24 md:pb-12 font-sans print:hidden">
           
-          {/* --- SOFTWARE-STYLE HEADER --- */}
           <div className="flex items-center justify-between gap-4 pb-3 sm:pb-4 border-b border-zinc-100">
             <div className="flex flex-col justify-center min-w-0">
               <h1 className="text-lg sm:text-xl font-bold tracking-tight text-zinc-900 leading-none truncate">
@@ -510,7 +525,6 @@ export default function ManageInventory() {
             </div>
           </div>
 
-          {/* --- CATEGORY TABS --- */}
           <div className="w-full overflow-x-auto scrollbar-none">
             <div className="flex gap-2.5 min-w-max pb-1">
               {CATEGORY_TABS.map(tab => {
@@ -533,14 +547,12 @@ export default function ManageInventory() {
             </div>
           </div>
 
-          {/* --- CONTENT AREA --- */}
           {isLoading ? (
             <div className="flex flex-col justify-center items-center h-64 gap-3 text-zinc-400">
               <Loader2 className="h-8 w-8 animate-spin text-zinc-900" />
               <span className="text-sm font-semibold tracking-wide">Loading topology...</span>
             </div>
           ) : activeTab === "MASALA_TEMPLATES" ? (
-             // MASALA RECIPES TAB
              <div className="space-y-4">
                 {templates.length === 0 ? (
                   <Card className="border border-dashed border-zinc-300 shadow-none bg-zinc-50/50 rounded-2xl">
@@ -585,7 +597,6 @@ export default function ManageInventory() {
              </Card>
           ) : (
             <div>
-              {/* --- MOBILE VIEW (ITEMS) --- */}
               <div className="grid grid-cols-1 gap-4 md:hidden">
                 {filteredItems.map((item) => {
                   const typeStr = String((item as any).item_type || "FINISHED_PRODUCT");
@@ -664,7 +675,6 @@ export default function ManageInventory() {
                 })}
               </div>
 
-              {/* --- DESKTOP VIEW (ITEMS) --- */}
               <Card className="hidden md:block shadow-sm border-zinc-200 rounded-[24px] overflow-hidden bg-white w-full">
                 <CardContent className="p-0">
                   <div className="overflow-x-auto w-full">
@@ -769,7 +779,7 @@ export default function ManageInventory() {
         </div>
       </div>
 
-      {/* EDIT TEMPLATE MODAL (STRICT SEQUENCE iPAD GRID) */}
+      {/* EDIT TEMPLATE MODAL (ACTIVE SPICES ONLY) */}
       <Dialog open={!!editingTemplate} onOpenChange={(open) => !open && setEditingTemplate(null)}>
         <DialogContent aria-describedby={undefined} className="sm:max-w-4xl max-h-[90dvh] overflow-hidden flex flex-col rounded-[24px] p-0 border-zinc-200 shadow-2xl bg-zinc-50">
            <div className="px-6 py-5 border-b border-zinc-200 bg-white shrink-0 z-10 flex justify-between items-center">
@@ -792,34 +802,60 @@ export default function ManageInventory() {
                 />
               </div>
 
+              {/* ACTIVE INGREDIENTS SECTION */}
               <div className="space-y-3">
-                <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider pl-1">Strict Bill Sequence Quantities (Per KG)</Label>
+                <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider pl-1">Active Ingredients (Per KG)</Label>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                   {tempIngredients.length === 0 ? (
-                      <p className="text-xs text-center text-zinc-400 py-8 font-semibold col-span-full">No spices available in DB.</p>
+                   {activeSpices.length === 0 ? (
+                      <p className="text-xs text-center text-zinc-400 py-8 font-semibold col-span-full border border-dashed border-zinc-300 rounded-2xl">
+                        No active spices. Add from the list below.
+                      </p>
                    ) : (
-                      tempIngredients.map((ing) => (
-                        <div key={ing.item_id} className="flex items-center justify-between rounded-2xl border border-zinc-200 bg-white p-2.5 shadow-sm hover:border-zinc-300 transition-colors">
+                      activeSpices.map((ing) => (
+                        <div key={ing.item_id} className="flex items-center justify-between rounded-2xl border border-zinc-200 bg-white p-2.5 shadow-sm">
                           <div className="min-w-0 flex-1 pl-2">
                             <p className="truncate text-sm font-bold text-zinc-900">{ing.item_name}</p>
                           </div>
-                          <div className="flex items-center gap-1.5 bg-zinc-50 rounded-xl p-1 border border-zinc-100">
-                            <Input 
-                              type="number" 
-                              step="0.001" 
-                              inputMode="decimal"
-                              value={ing.qty} 
-                              onChange={(e) => updateCustomIngredient(ing.item_id, Number(e.target.value))} 
-                              className="h-10 w-[72px] rounded-lg border-zinc-200 text-center font-bold text-[15px] shadow-inner focus-visible:ring-1 focus-visible:ring-emerald-500 bg-white" 
-                            />
-                            <span className="text-[11px] font-bold text-zinc-500 w-5">{ing.unit}</span>
+                          <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 bg-zinc-50 rounded-xl p-1 border border-zinc-100">
+                              <Input 
+                                type="number" 
+                                step="0.001" 
+                                inputMode="decimal"
+                                value={ing.qty} 
+                                onChange={(e) => updateCustomIngredient(ing.item_id, Number(e.target.value))} 
+                                className="h-10 w-[72px] rounded-lg border-zinc-200 text-center font-bold text-[15px] shadow-inner focus-visible:ring-1 focus-visible:ring-emerald-500 bg-white" 
+                              />
+                              <span className="text-[11px] font-bold text-zinc-500 w-5">{ing.unit}</span>
+                            </div>
+                            <button onClick={() => handleRemoveSpice(ing.item_id)} className="p-2 text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors">
+                              <X className="h-4 w-4" />
+                            </button>
                           </div>
                         </div>
                       ))
                    )}
                 </div>
               </div>
+
+              {/* AVAILABLE INGREDIENTS SECTION */}
+              {availableSpices.length > 0 && (
+                <div className="space-y-3 pt-6 border-t border-zinc-200">
+                  <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider pl-1">Available Spices to Add</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {availableSpices.map(ing => (
+                      <button 
+                        key={ing.item_id} 
+                        onClick={() => handleAddSpice(ing.item_id)} 
+                        className="flex items-center gap-1.5 px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-bold text-zinc-700 hover:border-zinc-400 hover:bg-zinc-50 shadow-sm active:scale-95 transition-all"
+                      >
+                        <Plus className="h-3 w-3 text-zinc-400" /> {ing.item_name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
            </div>
            
            <DialogFooter className="border-t border-zinc-200 bg-white p-5 shrink-0 gap-3 sm:gap-0">
@@ -912,21 +948,66 @@ export default function ManageInventory() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between border border-zinc-200 p-4 rounded-2xl bg-white shadow-sm">
-                <div className="space-y-0.5 flex flex-col">
-                    <Label className="text-sm font-bold text-zinc-900 flex items-center gap-2"><Globe className="h-4 w-4 text-zinc-500"/> Website Catalog</Label>
-                    <span className="text-[11px] font-semibold text-zinc-500">Show on public storefront</span>
+              {/* QUICK WEIGHTS */}
+              {String((editingItem as any)?.item_type) !== "SERVICE" && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="quick_weights" className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider flex items-center gap-1.5">
+                    <Scale className="h-3 w-3" /> Quick Scale Weights
+                  </Label>
+                  <Input 
+                    id="quick_weights" 
+                    placeholder="e.g. 5, 10, 20, 50" 
+                    className="h-12 rounded-xl border-zinc-200 shadow-inner bg-white focus-visible:ring-zinc-900 font-bold" 
+                    {...register("quick_weights")} 
+                  />
+                  <p className="text-[10px] font-semibold text-zinc-400">Leave empty to use defaults (25, 50, 100...). Values are in g or ml.</p>
                 </div>
-                <Switch 
-                  checked={watchedShowOnWeb}
-                  onCheckedChange={(val) => setValue("show_on_web", val)}
-                  className="data-[state=checked]:bg-zinc-900"
-                />
+              )}
+
+              {/* NEW STOREFRONT DETAILS FOR ZEPTO/BLINKIT NEXT.JS APP */}
+              <div className="space-y-4 pt-4 border-t border-zinc-200 mt-2">
+                  <div className="flex items-center gap-2 mb-2">
+                      <Globe className="h-4 w-4 text-blue-500" />
+                      <h3 className="text-sm font-bold text-zinc-900">Storefront Details</h3>
+                  </div>
+                  
+                  <div className="flex items-center justify-between border border-zinc-200 p-4 rounded-2xl bg-white shadow-sm">
+                    <div className="space-y-0.5 flex flex-col">
+                        <Label className="text-sm font-bold text-zinc-900">Website Catalog</Label>
+                        <span className="text-[11px] font-semibold text-zinc-500">Show on public storefront</span>
+                    </div>
+                    <Switch 
+                      checked={watchedShowOnWeb}
+                      onCheckedChange={(val) => setValue("show_on_web", val)}
+                      className="data-[state=checked]:bg-zinc-900"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="description" className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Product Description</Label>
+                    <textarea 
+                      id="description" 
+                      className="min-h-[80px] w-full rounded-xl border-zinc-200 shadow-inner bg-white focus-visible:ring-zinc-900 font-medium text-sm p-3 border outline-none" 
+                      placeholder="Enter Zepto-style expanded details, ingredients, or benefits..."
+                      {...register("description")} 
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="max_order_qty" className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Max Qty Per Order</Label>
+                      <Input id="max_order_qty" type="number" className="h-12 rounded-xl border-zinc-200 shadow-inner bg-white focus-visible:ring-zinc-900 font-bold" {...register("max_order_qty")} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="product_tags" className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Store Tags (Comma sep)</Label>
+                      <Input id="product_tags" placeholder="Bestseller, Organic, New" className="h-12 rounded-xl border-zinc-200 shadow-inner bg-white focus-visible:ring-zinc-900 font-bold" {...register("product_tags")} />
+                    </div>
+                  </div>
               </div>
 
               {String((editingItem as any)?.item_type) !== "SERVICE" && (
                 <>
-                  <div className="flex items-center justify-between border border-zinc-200 p-4 rounded-2xl bg-white shadow-sm">
+                  <div className="flex items-center justify-between border border-zinc-200 p-4 rounded-2xl bg-white shadow-sm mt-4">
                     <div className="space-y-0.5 flex flex-col">
                         <Label className="text-sm font-bold text-zinc-900 flex items-center gap-2"><Package className="h-4 w-4 text-zinc-500"/> Bulk Pack Setup</Label>
                         <span className="text-[11px] font-semibold text-zinc-500">Track inventory in master boxes</span>

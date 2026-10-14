@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Html5Qrcode } from "html5-qrcode";
 import {
   Camera, Search, X, ShoppingCart, ScanLine, Minus, Plus, Trash2,
-  UserRound, Phone, ChevronRight, CreditCard, Banknote, Package, Scale, 
-  FlaskConical, CheckCircle2, RotateCcw, Edit3, Receipt, Mic, ArrowLeft, ChevronDown, Printer, MessageCircle, Delete, NotebookPen, MapPin
+  UserRound, Phone, ChevronRight, Package, Scale, 
+  FlaskConical, CheckCircle2, Edit3, Receipt, Mic, ArrowLeft, ChevronDown, Printer, MessageCircle, Delete, NotebookPen, MapPin, Tag, Weight
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -89,17 +89,6 @@ const isWeightedItem = (item: Item) => {
 const getSafeItemName = (item: Item) => item.item_name || "Unnamed Item";
 
 const normalizeUnitStr = (str: string) => String(str || "").toLowerCase().trim();
-
-const getNormalizedQtyForCost = (qty: number, displayUnit: string, dbBaseUnit: string) => {
-  const u = normalizeUnitStr(displayUnit);
-  const bu = normalizeUnitStr(dbBaseUnit);
-  
-  if (u === 'piece' || u === 'nug' || u === 'pcs' || bu === 'piece') return qty;
-  if ((u === 'g' || u === 'gm' || u === 'gram' || u === 'grams') && (bu === 'kg' || bu === 'kilogram' || bu === 'kilograms')) return qty / 1000;
-  if ((u === 'ml') && (bu === 'l' || bu === 'ltr' || bu === 'liter' || bu === 'liters')) return qty / 1000;
-  if (qty >= 10 && bu.includes('kg')) return qty / 1000; 
-  return qty;
-};
 
 // EXACT JMM STRICT SEQUENCE
 const MASALA_SEQUENCE = [
@@ -192,22 +181,20 @@ const EmptyCart = () => (
 export default function Billing() {
   const { toast } = useToast();
   const [currentTenantId, setCurrentTenantId] = useState<string | null>(null);
-  const [billingUser, setBillingUser] = useState({ name: "Admin", role: "Manager" });
+  const [billingUser, setBillingUser] = useState({ name: "Admin", role: "Manager", id: "" });
   const [allItems, setAllItems] = useState<Item[]>([]);
   const [rawMaterials, setRawMaterials] = useState<Item[]>([]);
   const [masalaTemplates, setMasalaTemplates] = useState<MasalaTemplate[]>([]);
   const location = useLocation();
   const navigate = useNavigate();
 
-  // START: META CONFIGURATION STATE
-  const [orderMetaOpen, setOrderMetaOpen] = useState(false);
+  // META CONFIGURATION STATE
   const [orderMode, setOrderMode] = useState("WALK_IN"); 
   const [orderNotes, setOrderNotes] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [customerAddress, setCustomerAddress] = useState("");
   const [foundCustomer, setFoundCustomer] = useState<Customer | null>(null);
-  // END: META CONFIGURATION STATE
 
   const [selectedCategory, setSelectedCategory] = useState("ALL");
   const [searchTerm, setSearchTerm] = useState("");
@@ -217,6 +204,19 @@ export default function Billing() {
   
   // CORE CART STATE
   const [cart, setCart] = useState<OrderCartItem[]>([]);
+
+  // EXIT PROTECTION: Prevent accidental browser refresh or close
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (cart.length > 0) {
+        e.preventDefault();
+        e.returnValue = "You have items in your ledger. Are you sure you want to exit?";
+        return e.returnValue;
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [cart.length]);
   
   // STATE PERSISTENCE
   const hasLoadedCart = useRef(false);
@@ -238,7 +238,10 @@ export default function Billing() {
 
   const [orderNumber, setOrderNumber] = useState("");
   const [deliveryDate, setDeliveryDate] = useState("");
-  const [discountAmount, setDiscountAmount] = useState<number>(0);
+  
+  // DISCOUNT STATE
+  const [discountType, setDiscountType] = useState<"FIXED" | "PERCENT">("FIXED");
+  const [discountInput, setDiscountInput] = useState<string>("");
 
   const [payments, setPayments] = useState<PaymentEntry[]>([]);
   const [paymentAmountInput, setPaymentAmountInput] = useState("");
@@ -280,29 +283,56 @@ export default function Billing() {
   const [numpadConfig, setNumpadConfig] = useState<{isOpen: boolean, title: string, value: string, allowDecimal: boolean, onConfirm: (v: string)=>void}>({ isOpen: false, title: "", value: "", allowDecimal: true, onConfirm: ()=>{} });
 
   const [printType, setPrintType] = useState<"LABEL" | "RECEIPT" | null>(null);
+  const [printerSize, setPrinterSize] = useState<"80mm" | "110mm">("80mm");
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const hasAutoOpened = useRef(false);
-
-  const SPICE_WEIGHTS = [
-    { label: '10g', val: 0.01 }, { label: '20g', val: 0.02 }, { label: '25g', val: 0.025 },
-    { label: '50g', val: 0.05 }, { label: '100g', val: 0.1 }, { label: '200g', val: 0.2 },
-    { label: '250g', val: 0.25 }, { label: '500g', val: 0.5 }, { label: '750g', val: 0.75 },
-    { label: '1kg', val: 1 }, { label: '2kg', val: 2 }, { label: '3kg', val: 3 }
-  ];
 
   const LIQUID_WEIGHTS = [
     { label: '1L', val: 1 }, { label: '5L', val: 5 }, { label: '10L', val: 10 }, { label: '15L', val: 15 }
   ];
 
+  // DYNAMIC WEIGHT CALCULATION
+  const getDynamicQuickWeights = (item: Item | null) => {
+    if (!item) return [];
+    const baseUnit = String((item as any).base_unit || '').toLowerCase();
+    
+    if (['litre', 'ml', 'l'].includes(baseUnit)) {
+       return LIQUID_WEIGHTS;
+    }
+
+    const customWeights = (item as any).quick_weights;
+    if (customWeights && Array.isArray(customWeights) && customWeights.length > 0) {
+       return customWeights.map((w: number) => ({
+          label: w >= 1000 ? `${w/1000}kg` : `${w}g`,
+          val: w >= 1000 ? w/1000 : w/1000
+       }));
+    }
+
+    // Default Fallback (Starts from 25g)
+    return [
+      { label: '25g', val: 0.025 }, { label: '50g', val: 0.05 },
+      { label: '100g', val: 0.1 }, { label: '200g', val: 0.2 },
+      { label: '250g', val: 0.25 }, { label: '500g', val: 0.5 },
+      { label: '750g', val: 0.75 }, { label: '1kg', val: 1 },
+      { label: '2kg', val: 2 }, { label: '3kg', val: 3 },
+      { label: '5kg', val: 5 }, { label: '10kg', val: 10 }
+    ];
+  };
+
   // Calculations
   const subtotal = useMemo(() => cart.reduce((sum, item) => sum + Number(item.selling_price || 0) * item.cartQuantity, 0), [cart]);
-  const finalTotal = Math.max(0, subtotal - discountAmount);
+  
+  const calculatedDiscount = useMemo(() => {
+    const val = Number(discountInput) || 0;
+    if (discountType === "PERCENT") return (subtotal * val) / 100;
+    return val;
+  }, [subtotal, discountInput, discountType]);
+
+  const finalTotal = Math.max(0, subtotal - calculatedDiscount);
   const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
   const balanceDue = Math.max(0, finalTotal - totalPaid);
 
   useEffect(() => {
-    // Only auto-fill if the input is completely empty. This prevents the numpad from refilling 
-    // itself if the user explicitly clears it.
     if (balanceDue > 0 && payments.length === 0 && !paymentAmountInput) {
       setPaymentAmountInput(String(balanceDue));
     } else if (balanceDue === 0) {
@@ -357,8 +387,13 @@ export default function Billing() {
   }, [dynamicallyScaledIngredients]);
 
   const calculatedServicesCharge = useMemo(() => {
-    return activeServices.reduce((sum, svc) => sum + (masalaMultiplier * svc.rate), 0);
-  }, [activeServices, masalaMultiplier]);
+    return activeServices.reduce((sum, svc) => {
+      const isOil = svc.item_name.toLowerCase().includes("oil") || svc.item_name.includes("तेल");
+      // Oil is applied based on multiplier (batch), Labour is based on physical total weight (kg)
+      const qtyMultiplier = isOil ? masalaMultiplier : totalMixWeightKg;
+      return sum + (qtyMultiplier * svc.rate);
+    }, 0);
+  }, [activeServices, totalMixWeightKg, masalaMultiplier]);
 
   useEffect(() => {
     if (showCustomMasala) {
@@ -374,7 +409,9 @@ export default function Billing() {
       const { data: profileData } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
       const p = profileData as any;
       if (!p?.tenant_id) return;
-      setBillingUser({ name: p.full_name || "Admin", role: p.role || "Staff" });
+      
+      // Save staff ID for "Billed By" record tracking
+      setBillingUser({ name: p.full_name || "Admin", role: p.role || "Staff", id: session.user.id });
       setCurrentTenantId(p.tenant_id);
       
       await Promise.all([
@@ -622,6 +659,45 @@ export default function Billing() {
     setTempCustomIngredients((prev) => prev.filter((ing) => ing.item_id !== itemId));
   };
 
+  // --- DEMO PRINT MASALA ESTIMATE ---
+  const handlePrintMasalaEstimate = () => {
+    const estimateOrderObj = {
+      order_number: "ESTIMATE ONLY",
+      is_estimate: true, // Used to trigger Estimate label in ThermalReceipt
+      final_amount: customPrice || 0,
+      subtotal: customPrice || 0,
+      customerName: customerName || "Masala Estimate",
+      customerPhone: customerPhone || "",
+      customerAddress: "",
+      totalMixWeightKg: totalMixWeightKg,
+      receiptServices: Array.from(activeServices).map(svc => {
+         const isOil = svc.item_name.toLowerCase().includes("oil") || svc.item_name.includes("तेल");
+         const qtyMultiplier = isOil ? masalaMultiplier : totalMixWeightKg;
+         return {
+           name: svc.item_name,
+           total: svc.rate * qtyMultiplier
+         };
+      }),
+      cartItems: [{
+        id: "estimate-1",
+        item_name: "Yearly Masala (Estimate)",
+        cartQuantity: 1,
+        selling_price: customPrice,
+        customIngredients: dynamicallyScaledIngredients.filter(ing => ing.qty > 0),
+        appliedServices: activeServices,
+        recipeMultiplier: masalaMultiplier,
+      }],
+      advancePaid: 0,
+      balanceDue: customPrice || 0,
+      discountAmount: 0,
+      payments: [],
+      created_at: new Date().toISOString(),
+    };
+    
+    setCompletedOrder(estimateOrderObj);
+    setTimeout(() => { window.print(); }, 100);
+  };
+
   const saveCustomization = async () => {
     if (!customPrice || Number(customPrice) <= 0) return toast({ title: "Enter a selling price", variant: "destructive" });
     
@@ -708,12 +784,20 @@ export default function Billing() {
       const orderStatus = deliveryDate ? "BOOKED" : "DELIVERED";
 
       const { data: order, error: orderError } = await (supabase as any).from("orders").insert({
-        tenant_id: currentTenantId, customer_id: customer?.id || null, order_number: orderNumber,
+        tenant_id: currentTenantId, 
+        customer_id: customer?.id || null, 
+        order_number: orderNumber,
         source: orderMode,
-        status: orderStatus, payment_status: paymentStatus, total_amount: finalTotal,
+        status: orderStatus, 
+        payment_status: paymentStatus, 
+        total_amount: finalTotal,
         delivery_date: deliveryDate || null, 
         notes: orderNotes || null,
-        customer_address: customerAddress || null
+        customer_address: customerAddress || null,
+        discount_type: discountType,
+        discount_value: Number(discountInput) || 0,
+        discount_amount: calculatedDiscount,
+        created_by: billingUser.id 
       }).select("*").single();
 
       if (orderError) throw orderError;
@@ -730,16 +814,18 @@ export default function Billing() {
         if (orderItemError) throw orderItemError;
 
         if (cartItem.customIngredients && cartItem.customIngredients.length > 0) {
-          const weight = cartItem.customIngredients.reduce((s, i) => {
+          const itemWeight = cartItem.customIngredients.reduce((s, i) => {
              const u = normalizeUnitStr(i.unit);
              if (u === 'piece' || u === 'nug' || u === 'pcs') return s;
              return s + (u === 'g' || u === 'gm' ? i.qty / 1000 : i.qty);
           }, 0);
-          totalMixWeight += weight;
+          totalMixWeight += itemWeight;
 
           if (cartItem.appliedServices && cartItem.appliedServices.length > 0) {
             for (const svc of cartItem.appliedServices) {
-              const charge = (cartItem.recipeMultiplier || 1) * svc.rate;
+              const isOil = svc.item_name.toLowerCase().includes("oil") || svc.item_name.includes("तेल");
+              const qtyMultiplier = isOil ? cartItem.recipeMultiplier || 1 : itemWeight;
+              const charge = qtyMultiplier * svc.rate; 
               aggregatedServices.set(svc.item_name, (aggregatedServices.get(svc.item_name) || 0) + charge);
             }
           }
@@ -753,8 +839,14 @@ export default function Billing() {
 
       if (payments.length > 0) {
         const records = payments.map((p) => ({
-          tenant_id: currentTenantId, order_id: order.id, customer_id: customer?.id || null, amount: p.amount,
-          payment_method: p.method, payment_type: balanceDue > 0 ? "ADVANCE" : "PAYMENT", payment_date: new Date().toISOString(),
+          tenant_id: currentTenantId, 
+          order_id: order.id, 
+          customer_id: customer?.id || null, 
+          amount: p.amount,
+          payment_method: p.method, 
+          payment_type: balanceDue > 0 ? "ADVANCE" : "PAYMENT", 
+          payment_date: new Date().toISOString(),
+          created_by: billingUser.id 
         }));
         await (supabase as any).from("payments").insert(records);
       }
@@ -773,7 +865,7 @@ export default function Billing() {
         receiptServices: receiptServicesArray,
         advancePaid: totalPaid,
         balanceDue: balanceDue,
-        discountAmount, 
+        discountAmount: calculatedDiscount, 
         payments 
       });
       setShowSuccessModal(true);
@@ -790,7 +882,7 @@ export default function Billing() {
 
   const resetBill = async () => {
     setCart([]); setPayments([]); setCustomerPhone(""); setCustomerName(""); setFoundCustomer(null);
-    setDeliveryDate(""); setDiscountAmount(0); setSearchTerm(""); setSelectedCategory("ALL"); setQuickQuantity("1");
+    setDeliveryDate(""); setDiscountInput(""); setDiscountType("FIXED"); setSearchTerm(""); setSelectedCategory("ALL"); setQuickQuantity("1");
     setOrderNotes(""); setCustomerAddress(""); setOrderMode("WALK_IN");
     localStorage.removeItem('biillo-cart');
     if (currentTenantId) await fetchNextOrderNumber(currentTenantId);
@@ -828,9 +920,6 @@ export default function Billing() {
           <p className="text-xs font-medium text-zinc-500">{cart.length} items</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => setOrderMetaOpen(true)} className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-blue-600 border border-blue-200 bg-blue-50 hover:bg-blue-100 transition-all">
-            <Edit3 className="h-3.5 w-3.5" /> Info
-          </button>
           {cart.length > 0 && (
             <button onClick={resetBill} className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-rose-600 border border-rose-200 bg-rose-50 hover:bg-rose-100 transition-all">
               <Trash2 className="h-3.5 w-3.5" /> Clear
@@ -896,6 +985,12 @@ export default function Billing() {
             <span className="font-medium text-[11px] uppercase tracking-wider">Subtotal</span>
             <span className="font-semibold text-zinc-800">{formatCurrency(subtotal)}</span>
           </div>
+          {calculatedDiscount > 0 && (
+            <div className="flex justify-between text-emerald-600 mt-1">
+              <span className="font-medium text-[11px] uppercase tracking-wider">Discount</span>
+              <span className="font-semibold">- {formatCurrency(calculatedDiscount)}</span>
+            </div>
+          )}
           <div className="flex justify-between pt-2 border-t border-zinc-200 mt-2">
             <span className="font-semibold text-zinc-900">Total</span>
             <span className="text-xl font-bold tracking-tight text-zinc-900">{formatCurrency(finalTotal)}</span>
@@ -920,10 +1015,9 @@ export default function Billing() {
             <div className="flex items-center gap-3 w-full">
               <div className="hidden shrink-0 lg:block mr-2">
                 <h1 className="text-lg font-semibold tracking-tight text-zinc-900">Billing</h1>
-                <div onClick={() => setOrderMetaOpen(true)} className="flex items-center gap-1.5 mt-0.5 cursor-pointer hover:bg-zinc-100 p-1 -ml-1 rounded-md transition-colors w-max">
+                <div className="flex items-center gap-1.5 mt-0.5 w-max">
                   <span className="flex h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
                   <p className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest">{orderMode.replace('_', ' ')} MODE</p>
-                  <Edit3 className="h-3 w-3 text-zinc-400" />
                 </div>
               </div>
 
@@ -1066,44 +1160,6 @@ export default function Billing() {
         )}
       </div>
 
-      {/* --- PRE-CHECKOUT ORDER META DIALOG --- */}
-      <Dialog open={orderMetaOpen} onOpenChange={setOrderMetaOpen}>
-        <DialogContent aria-describedby={undefined} className="sm:max-w-md w-[95vw] rounded-[32px] p-6 shadow-2xl border-zinc-200 bg-white">
-          <DialogHeader>
-            <DialogTitle className="text-xl font-bold text-zinc-900">Order Information</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-5 mt-2">
-            <div>
-              <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">Order Mode</Label>
-              <div className="flex gap-2 p-1 bg-zinc-100/80 border border-zinc-200 rounded-xl mt-1.5 shadow-inner">
-                {["WALK_IN", "MONTHLY", "ONLINE"].map(m => (
-                  <button key={m} onClick={() => setOrderMode(m)} className={`flex-1 h-10 rounded-lg text-xs font-bold transition-all ${orderMode === m ? 'bg-white text-zinc-900 shadow-sm border border-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}>{m.replace('_', ' ')}</button>
-                ))}
-              </div>
-            </div>
-            
-            <div>
-              <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">Customer Details</Label>
-              <div className="space-y-2 mt-1.5">
-                <button onClick={() => setNumpadConfig({isOpen: true, title: "Customer Phone", value: customerPhone, allowDecimal: false, onConfirm: (v) => handlePhoneChange(v)})} className="h-12 w-full px-4 text-left text-[15px] rounded-xl font-bold bg-zinc-50 border border-zinc-200 shadow-inner flex items-center hover:bg-zinc-100 transition-colors">
-                   {customerPhone || <span className="text-zinc-400 font-medium">Phone Number</span>}
-                </button>
-                <Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Full Name" className="h-12 px-4 text-[15px] rounded-xl font-bold bg-zinc-50 border-zinc-200 shadow-inner" />
-                <Input value={customerAddress} onChange={e => setCustomerAddress(e.target.value)} placeholder="Delivery Address" className="h-12 px-4 text-[15px] rounded-xl font-bold bg-zinc-50 border-zinc-200 shadow-inner" />
-              </div>
-            </div>
-
-            <div>
-               <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">Order Notes</Label>
-               <Input value={orderNotes} onChange={e => setOrderNotes(e.target.value)} placeholder="Special instructions..." className="h-12 mt-1.5 px-4 text-[15px] rounded-xl font-bold bg-zinc-50 border-zinc-200 shadow-inner" />
-            </div>
-          </div>
-          <DialogFooter className="mt-6">
-            <Button onClick={() => setOrderMetaOpen(false)} className="w-full h-14 rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-[16px] shadow-sm active:scale-95">Save Details</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {/* --- STREAMLINED 1-STEP MOBILE CHECKOUT --- */}
       {checkoutOpen && (
         <div className="fixed inset-0 z-[100] bg-zinc-50 flex flex-col animate-in slide-in-from-bottom-4 duration-300 xl:hidden">
@@ -1148,7 +1204,7 @@ export default function Billing() {
               </div>
             </div>
             
-            {/* 2. BIG TOTAL & PAYMENTS */}
+            {/* 2. BIG TOTAL & PAYMENTS WITH DISCOUNT */}
             <div className="bg-white p-5 rounded-[24px] border border-zinc-200 shadow-sm space-y-5">
               <div className="text-center pb-4 border-b border-zinc-100">
                 <p className="text-[11px] font-bold uppercase tracking-widest text-zinc-400 mb-1">Amount Due</p>
@@ -1156,7 +1212,24 @@ export default function Billing() {
                 {totalPaid > 0 && <p className="text-sm font-bold text-emerald-600 mt-3 bg-emerald-50 inline-block px-4 py-1.5 rounded-xl border border-emerald-100">Paid: {formatCurrency(totalPaid)}</p>}
               </div>
 
-              <div className="space-y-3">
+              {/* DISCOUNT MODULE */}
+              <div className="space-y-3 pt-2">
+                 <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1 flex items-center gap-1.5"><Tag className="h-3.5 w-3.5"/> Discount (Optional)</Label>
+                 <div className="flex gap-2">
+                   <div className="flex bg-zinc-100/80 border border-zinc-200 rounded-xl p-1 shadow-inner shrink-0">
+                     <button onClick={() => { setDiscountType("FIXED"); setDiscountInput(""); }} className={`px-4 rounded-lg text-sm font-bold transition-all ${discountType === 'FIXED' ? 'bg-white shadow-sm text-zinc-900' : 'text-zinc-500'}`}>₹</button>
+                     <button onClick={() => { setDiscountType("PERCENT"); setDiscountInput(""); }} className={`px-4 rounded-lg text-sm font-bold transition-all ${discountType === 'PERCENT' ? 'bg-white shadow-sm text-zinc-900' : 'text-zinc-500'}`}>%</button>
+                   </div>
+                   <button onClick={() => setNumpadConfig({isOpen: true, title: "Enter Discount", value: discountInput, allowDecimal: true, onConfirm: (v) => setDiscountInput(v)})} className="h-12 flex-1 rounded-xl border border-zinc-200 bg-white text-left px-4 text-[16px] font-bold text-zinc-900 shadow-sm flex items-center hover:bg-zinc-50 transition-colors">
+                     {discountInput ? (discountType === 'FIXED' ? `₹ ${discountInput}` : `${discountInput} %`) : "0"}
+                   </button>
+                 </div>
+                 {calculatedDiscount > 0 && (
+                   <p className="text-xs font-bold text-emerald-600 text-right pr-2 animate-in fade-in">- {formatCurrency(calculatedDiscount)} applied</p>
+                 )}
+              </div>
+
+              <div className="space-y-3 pt-4 border-t border-zinc-100">
                  <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Record Payment</Label>
                  <div className="flex gap-2 p-1 bg-zinc-100/80 border border-zinc-200 rounded-xl shadow-inner">
                    {["CASH", "UPI", "CARD"].map(m => (
@@ -1233,13 +1306,22 @@ export default function Billing() {
             {/* 4. ORDER SETTINGS (Optional) */}
             <div className="bg-white p-5 rounded-[24px] border border-zinc-200 shadow-sm space-y-4">
                <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Order Details</Label>
-               <div className="flex gap-2">
-                 <div className="relative flex-1">
-                   <Receipt className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                   <Input value={orderNumber} onChange={e => setOrderNumber(e.target.value)} className="h-14 pl-11 text-[16px] rounded-2xl font-bold bg-zinc-50 border-zinc-200 shadow-inner" placeholder="Order No."/>
-                 </div>
-                 <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className="h-14 w-[130px] rounded-2xl font-bold bg-zinc-50 text-[15px] border-zinc-200 shadow-inner px-3" />
+               <div className="relative">
+                 <Receipt className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                 <Input value={orderNumber} onChange={e => setOrderNumber(e.target.value)} className="h-14 pl-11 text-[16px] rounded-2xl font-bold bg-zinc-50 border-zinc-200 shadow-inner w-full" placeholder="Order No."/>
                </div>
+               
+               {/* REDESIGNED DATE UI */}
+               <div className="flex flex-col gap-2">
+                 <Button onClick={() => setDeliveryDate("")} variant={!deliveryDate ? "default" : "outline"} className={`h-14 rounded-2xl font-bold justify-start px-4 active:scale-95 transition-all shadow-sm ${!deliveryDate ? 'bg-zinc-900 text-white' : 'text-zinc-600 border-zinc-200 bg-white'}`}>
+                   <CheckCircle2 className={`h-5 w-5 mr-3 ${!deliveryDate ? 'text-emerald-400' : 'text-transparent'}`} />
+                   Instant Delivery (Today)
+                 </Button>
+                 <div className="relative">
+                   <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className={`h-14 w-full rounded-2xl border-zinc-200 shadow-sm text-[15px] font-bold px-4 transition-all focus-visible:ring-zinc-900 ${deliveryDate ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-white text-zinc-500'}`} />
+                 </div>
+               </div>
+
                <div className="relative">
                  <NotebookPen className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
                  <Input value={orderNotes} onChange={e => setOrderNotes(e.target.value)} placeholder="Add remarks or instructions..." className="h-14 pl-11 text-[16px] rounded-2xl font-bold bg-zinc-50 border-zinc-200 shadow-inner" />
@@ -1252,9 +1334,8 @@ export default function Billing() {
             </div>
           </div>
           
-          {/* 5. STICKY COMPLETE BUTTON */}
-          <div className="p-4 sm:p-5 border-t border-zinc-200 bg-white shrink-0 pb-safe shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
-            <Button disabled={isProcessing || (balanceDue > 0 && !customerPhone)} onClick={createOrder} className="h-14 w-full rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-lg shadow-[0_4px_15px_rgba(16,185,129,0.25)] active:scale-[0.98] transition-transform">
+          <div className="p-5 border-t border-zinc-100 bg-white shrink-0">
+            <Button disabled={isProcessing || (balanceDue > 0 && !customerPhone)} onClick={createOrder} className="h-14 w-full rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-[16px] font-bold text-white shadow-[0_4px_15px_rgba(16,185,129,0.25)] active:scale-[0.98] transition-transform">
               {isProcessing ? "Processing..." : balanceDue > 0 ? `Save Order — ${formatCurrency(balanceDue)} Due` : "Complete Transaction"}
             </Button>
             {balanceDue > 0 && !customerPhone && (
@@ -1282,50 +1363,22 @@ export default function Billing() {
             </div>
 
             <div className="space-y-5">
-              <div className="space-y-2">
-                <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Order Mode</Label>
-                <div className="flex gap-2 p-1 bg-zinc-100/80 border border-zinc-200 rounded-xl shadow-inner mb-4">
-                  {["WALK_IN", "MONTHLY", "ONLINE"].map(m => (
-                    <button key={m} onClick={() => setOrderMode(m)} className={`flex-1 h-10 rounded-lg text-xs font-bold transition-all ${orderMode === m ? 'bg-white text-zinc-900 shadow-sm border border-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}>{m.replace('_', ' ')}</button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Order Details</Label>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <Receipt className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                    <Input value={orderNumber} onChange={e => setOrderNumber(e.target.value)} className="h-12 pl-11 text-[16px] rounded-xl border-zinc-200 shadow-sm font-bold bg-white" placeholder="Order No."/>
-                  </div>
-                  <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className="h-12 w-[130px] rounded-xl border-zinc-200 shadow-sm text-[16px] font-bold bg-white" />
-                </div>
-                <div className="relative mt-2">
-                  <NotebookPen className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                  <Input value={orderNotes} onChange={e => setOrderNotes(e.target.value)} className="h-12 pl-11 text-[16px] rounded-xl border-zinc-200 shadow-sm font-bold bg-white" placeholder="Order Notes / Instructions"/>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Customer CRM</Label>
-                <div className="relative">
-                  <Phone className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                  <button onClick={() => setNumpadConfig({isOpen: true, title: "Customer Phone", value: customerPhone, allowDecimal: false, onConfirm: (v) => handlePhoneChange(v)})} className="h-12 w-full pl-11 text-left text-[16px] rounded-xl font-bold bg-white border border-zinc-200 shadow-sm flex items-center hover:bg-zinc-50">
-                    {customerPhone || <span className="text-zinc-400 font-medium">Enter 10-digit number</span>}
-                  </button>
-                </div>
-                {customerPhone.length >= 10 && (
-                  <div className="relative mt-2 animate-in fade-in slide-in-from-top-2 space-y-2">
-                    <div className="relative">
-                      <UserRound className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                      <Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Customer Name" className="h-12 pl-11 text-[16px] rounded-xl border-zinc-200 shadow-sm font-bold bg-white" />
-                    </div>
-                    <div className="relative">
-                      <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                      <Input value={customerAddress} onChange={e => setCustomerAddress(e.target.value)} placeholder="Delivery Address" className="h-12 pl-11 text-[16px] rounded-xl border-zinc-200 shadow-sm font-bold bg-white" />
-                    </div>
-                  </div>
-                )}
+              
+              {/* DISCOUNT MODULE */}
+              <div className="space-y-3">
+                 <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1 flex items-center gap-1.5"><Tag className="h-3.5 w-3.5"/> Discount (Optional)</Label>
+                 <div className="flex gap-2">
+                   <div className="flex bg-zinc-100/80 border border-zinc-200 rounded-xl p-1 shadow-inner shrink-0">
+                     <button onClick={() => { setDiscountType("FIXED"); setDiscountInput(""); }} className={`px-4 rounded-lg text-sm font-bold transition-all ${discountType === 'FIXED' ? 'bg-white shadow-sm text-zinc-900' : 'text-zinc-500'}`}>₹</button>
+                     <button onClick={() => { setDiscountType("PERCENT"); setDiscountInput(""); }} className={`px-4 rounded-lg text-sm font-bold transition-all ${discountType === 'PERCENT' ? 'bg-white shadow-sm text-zinc-900' : 'text-zinc-500'}`}>%</button>
+                   </div>
+                   <button onClick={() => setNumpadConfig({isOpen: true, title: "Enter Discount", value: discountInput, allowDecimal: true, onConfirm: (v) => setDiscountInput(v)})} className="h-12 flex-1 rounded-xl border border-zinc-200 bg-white text-left px-4 text-[16px] font-bold text-zinc-900 shadow-sm flex items-center hover:bg-zinc-50 transition-colors">
+                     {discountInput ? (discountType === 'FIXED' ? `₹ ${discountInput}` : `${discountInput} %`) : "0"}
+                   </button>
+                 </div>
+                 {calculatedDiscount > 0 && (
+                   <p className="text-xs font-bold text-emerald-600 text-right pr-2 animate-in fade-in">- {formatCurrency(calculatedDiscount)} applied</p>
+                 )}
               </div>
 
               <div className="space-y-3 bg-zinc-50 border border-zinc-200 p-4 rounded-[24px] shadow-inner">
@@ -1380,6 +1433,57 @@ export default function Billing() {
                   </div>
                 )}
               </div>
+
+              <div className="space-y-2">
+                <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Customer CRM</Label>
+                <div className="relative">
+                  <Phone className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                  <button onClick={() => setNumpadConfig({isOpen: true, title: "Customer Phone", value: customerPhone, allowDecimal: false, onConfirm: (v) => handlePhoneChange(v)})} className="h-12 w-full pl-11 text-left text-[16px] rounded-xl font-bold bg-white border border-zinc-200 shadow-sm flex items-center hover:bg-zinc-50">
+                    {customerPhone || <span className="text-zinc-400 font-medium">Enter 10-digit number</span>}
+                  </button>
+                </div>
+                {customerPhone.length >= 10 && (
+                  <div className="relative mt-2 animate-in fade-in slide-in-from-top-2 space-y-2">
+                    <div className="relative">
+                      <UserRound className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                      <Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Customer Name" className="h-12 pl-11 text-[16px] rounded-xl border-zinc-200 shadow-sm font-bold bg-white" />
+                    </div>
+                    <div className="relative">
+                      <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                      <Input value={customerAddress} onChange={e => setCustomerAddress(e.target.value)} placeholder="Delivery Address" className="h-12 pl-11 text-[16px] rounded-xl border-zinc-200 shadow-sm font-bold bg-white" />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                <Label className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Order Details</Label>
+                <div className="relative">
+                  <Receipt className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                  <Input value={orderNumber} onChange={e => setOrderNumber(e.target.value)} className="h-12 pl-11 text-[16px] rounded-xl border-zinc-200 shadow-sm font-bold bg-white" placeholder="Order No."/>
+                </div>
+                
+                {/* REDESIGNED DATE UI */}
+                <div className="flex flex-col gap-2">
+                  <Button onClick={() => setDeliveryDate("")} variant={!deliveryDate ? "default" : "outline"} className={`h-12 rounded-xl font-bold justify-start px-4 active:scale-95 transition-all shadow-sm ${!deliveryDate ? 'bg-zinc-900 text-white' : 'text-zinc-600 border-zinc-200 bg-white'}`}>
+                    <CheckCircle2 className={`h-4 w-4 mr-2 ${!deliveryDate ? 'text-emerald-400' : 'text-transparent'}`} />
+                    Instant Delivery (Today)
+                  </Button>
+                  <div className="relative">
+                    <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className={`h-12 w-full rounded-xl border-zinc-200 shadow-sm text-[15px] font-bold px-4 transition-all focus-visible:ring-zinc-900 ${deliveryDate ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-white text-zinc-500'}`} />
+                  </div>
+                </div>
+
+                <div className="relative">
+                  <NotebookPen className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                  <Input value={orderNotes} onChange={e => setOrderNotes(e.target.value)} className="h-12 pl-11 text-[16px] rounded-xl border-zinc-200 shadow-sm font-bold bg-white" placeholder="Order Notes / Instructions"/>
+                </div>
+                <div className="flex gap-2 p-1 bg-zinc-100/80 border border-zinc-200 rounded-xl shadow-inner mt-4">
+                  {["WALK_IN", "MONTHLY", "ONLINE"].map(m => (
+                    <button key={m} onClick={() => setOrderMode(m)} className={`flex-1 h-10 rounded-lg text-xs font-bold transition-all ${orderMode === m ? 'bg-white text-zinc-900 shadow-sm border border-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}>{m.replace('_', ' ')}</button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
           
@@ -1430,7 +1534,7 @@ export default function Billing() {
                    <span className="text-4xl font-bold text-zinc-900 tracking-tight">{weightInput || "0"}</span>
                 </div>
                 <div className="grid grid-cols-4 gap-2">
-                  {(weightedItem && ['litre', 'ml', 'l'].includes(String((weightedItem as any).base_unit).toLowerCase()) ? LIQUID_WEIGHTS : SPICE_WEIGHTS).map((btn) => (
+                  {getDynamicQuickWeights(weightedItem).map((btn) => (
                     <button key={btn.label} onClick={() => setWeightInput(String(btn.val))} className={`py-4 rounded-xl text-sm font-bold transition-colors ${weightInput === String(btn.val) ? 'bg-zinc-900 text-white shadow-md border border-zinc-900' : 'bg-white border border-zinc-200 text-zinc-700 shadow-sm active:scale-95'}`}>
                       {btn.label}
                     </button>
@@ -1510,11 +1614,20 @@ export default function Billing() {
             </div>
 
             <div className="space-y-3 pt-4 border-t border-zinc-100">
-              <div className="flex justify-between text-xs font-semibold text-zinc-600"><span>Raw Material Cost</span><span>{formatCurrency(materialCost)}</span></div>
+              <div className="flex justify-between items-center text-xs font-semibold text-zinc-600 bg-blue-50/50 p-2 rounded-lg border border-blue-100">
+                <span className="flex items-center gap-1.5 text-blue-700"><Weight className="h-4 w-4" /> Total Mix Weight</span>
+                <span className="text-blue-700 font-bold text-sm">{totalMixWeightKg.toFixed(3)} kg</span>
+              </div>
+              <div className="flex justify-between text-xs font-semibold text-zinc-600 px-1">
+                <span>Raw Material Cost</span>
+                <span>{formatCurrency(materialCost)}</span>
+              </div>
+              
               <div className="space-y-2 pt-2 border-t border-zinc-100">
                 <Label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">3. Applied Services</Label>
                 {availableServices.map(svc => {
                   const isActive = activeServices.find(a => a.item_id === svc.id);
+                  const isOil = svc.item_name.toLowerCase().includes("oil") || svc.item_name.includes("तेल");
                   return (
                     <div key={svc.id} className="flex justify-between items-center text-xs font-semibold text-zinc-600">
                       <div className="flex items-center gap-2">
@@ -1522,9 +1635,14 @@ export default function Billing() {
                         <span>{svc.item_name}</span>
                       </div>
                       {isActive && (
-                        <button onClick={() => setNumpadConfig({isOpen: true, title: `Edit ${svc.item_name} Rate`, value: String(isActive.rate), allowDecimal: true, onConfirm: (v) => setActiveServices(p => p.map(a => a.item_id === svc.id ? { ...a, rate: Number(v) } : a))})} className="h-7 px-3 border border-zinc-200 rounded-md bg-white font-bold shadow-sm flex items-center justify-center text-zinc-900">
-                          ₹{isActive.rate}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-zinc-400 font-medium">
+                            {isOil ? `(₹${isActive.rate} × ${masalaMultiplier} batch)` : `(₹${isActive.rate}/kg × ${totalMixWeightKg.toFixed(3)}kg)`}
+                          </span>
+                          <button onClick={() => setNumpadConfig({isOpen: true, title: `Edit ${svc.item_name} Rate`, value: String(isActive.rate), allowDecimal: true, onConfirm: (v) => setActiveServices(p => p.map(a => a.item_id === svc.id ? { ...a, rate: Number(v) } : a))})} className="h-7 px-3 border border-zinc-200 rounded-md bg-white font-bold shadow-sm flex items-center justify-center text-zinc-900">
+                            ₹{Math.round(isActive.rate * (isOil ? masalaMultiplier : totalMixWeightKg))}
+                          </button>
+                        </div>
                       )}
                     </div>
                   );
@@ -1538,9 +1656,10 @@ export default function Billing() {
               </button>
             </div>
           </div>
-          <DialogFooter className="border-t border-zinc-100 bg-zinc-50/50 p-4 shrink-0 grid grid-cols-2 gap-3">
-            <Button variant="outline" onClick={() => setShowCustomMasala(false)} className="h-12 rounded-xl font-bold w-full text-[15px]">Cancel</Button>
-            <Button onClick={saveCustomization} className="h-12 rounded-xl bg-zinc-900 text-white font-bold w-full text-[15px]">Save to Ledger</Button>
+          <DialogFooter className="border-t border-zinc-100 bg-zinc-50/50 p-4 shrink-0 flex flex-col sm:flex-row gap-3">
+            <Button variant="outline" onClick={() => setShowCustomMasala(false)} className="h-12 rounded-xl font-bold flex-1 text-[15px]">Cancel</Button>
+            <Button variant="outline" onClick={handlePrintMasalaEstimate} className="h-12 rounded-xl font-bold flex-1 text-[15px] border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100"><Printer className="h-4 w-4 mr-2"/> Print Demo</Button>
+            <Button onClick={saveCustomization} className="h-12 rounded-xl bg-zinc-900 text-white font-bold flex-1 text-[15px]">Save to Ledger</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1558,33 +1677,58 @@ export default function Billing() {
 
       {/* SUCCESS MODAL WITH PRINT & WHATSAPP */}
       <Dialog open={showSuccessModal} onOpenChange={setShowSuccessModal}>
-        <DialogContent aria-describedby={undefined} className="sm:max-w-md w-[95vw] rounded-3xl p-6 text-center border-zinc-200 shadow-2xl bg-white mb-auto mt-20 sm:m-auto">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50 border border-emerald-100 mb-4"><CheckCircle2 className="h-8 w-8 text-emerald-500" /></div>
-          <DialogTitle className="text-xl font-bold tracking-tight text-zinc-900">Transaction Complete</DialogTitle>
+        <DialogContent aria-describedby={undefined} className="sm:max-w-md w-full rounded-t-[32px] rounded-b-none sm:rounded-[32px] p-6 text-center border-zinc-200 shadow-2xl bg-white mt-auto sm:m-auto gap-0 max-h-[90dvh] overflow-y-auto">
           
-          <div className="mt-5 rounded-2xl border border-zinc-100 bg-zinc-50 p-5 shadow-inner">
-            <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">Amount Recorded</p>
-            <p className="mt-1 text-4xl font-black tracking-tight text-zinc-900">{formatCurrency(completedOrder?.final_amount || 0)}</p>
-            <p className="mt-2 text-[11px] font-bold text-zinc-500 bg-white border border-zinc-200 shadow-sm rounded-lg px-2.5 py-1 inline-block">{completedOrder?.order_number}</p>
+          <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-emerald-50 border-[6px] border-emerald-100/50 mb-4 mt-2">
+            <CheckCircle2 className="h-10 w-10 text-emerald-500" />
+          </div>
+          
+          <DialogTitle className="text-2xl font-black tracking-tight text-zinc-900">Payment Successful</DialogTitle>
+          
+          <div className="mt-6 rounded-[24px] border border-zinc-100 bg-zinc-50 p-6 shadow-inner relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-400 to-emerald-500"></div>
+            <p className="text-[12px] font-bold uppercase tracking-widest text-zinc-500 mb-1">Total Received</p>
+            <p className="text-5xl font-black tracking-tight text-zinc-900">{formatCurrency(completedOrder?.final_amount || 0)}</p>
+            
+            <div className="mt-3 flex justify-center gap-2">
+              <span className="text-[11px] font-bold text-zinc-600 bg-white border border-zinc-200 shadow-sm rounded-lg px-3 py-1.5 inline-flex items-center gap-1.5">
+                <Receipt className="h-3 w-3 text-zinc-400"/> {completedOrder?.order_number}
+              </span>
+            </div>
           </div>
 
+          {/* WhatsApp Auto-Send Mock Indicator */}
+          {completedOrder?.customerPhone && (
+            <div className="mt-4 flex items-center justify-center gap-2 text-[13px] font-bold text-emerald-700 bg-emerald-50 py-2.5 px-4 rounded-xl border border-emerald-100 animate-in fade-in zoom-in slide-in-from-bottom-2">
+              <CheckCircle2 className="h-4 w-4" />
+              Receipt Auto-Sent to {completedOrder.customerPhone}
+            </div>
+          )}
+
           <div className="flex flex-col gap-3 mt-6">
+            {/* Printer Size Selector */}
+            <div className="flex items-center justify-between bg-zinc-100/80 border border-zinc-200 rounded-xl p-1 shadow-inner">
+              <button onClick={() => setPrinterSize("80mm")} className={`flex-1 h-10 rounded-lg text-xs font-bold transition-all ${printerSize === "80mm" ? 'bg-white text-zinc-900 shadow-sm border border-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}>3" Printer</button>
+              <button onClick={() => setPrinterSize("110mm")} className={`flex-1 h-10 rounded-lg text-xs font-bold transition-all ${printerSize === "110mm" ? 'bg-white text-zinc-900 shadow-sm border border-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}>4" Printer</button>
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
-              <Button onClick={handlePrintReceipt} variant="outline" className="h-12 rounded-xl font-bold text-zinc-700 border-zinc-200 shadow-sm hover:bg-zinc-50">
-                <Printer className="h-4 w-4 mr-2 text-zinc-500" /> Print Bill
+              <Button onClick={handlePrintReceipt} variant="outline" className="h-14 rounded-2xl font-bold text-zinc-700 border-zinc-200 shadow-sm hover:bg-zinc-50 text-[15px]">
+                <Printer className="h-5 w-5 mr-2 text-zinc-500" /> Print Bill
               </Button>
-              <Button onClick={handleSendWhatsApp} disabled={!completedOrder?.customerPhone} className="h-12 rounded-xl font-bold bg-[#25D366] text-white shadow-sm hover:bg-[#1DA851] border-none">
-                <MessageCircle className="h-4 w-4 mr-2" /> WhatsApp
+              <Button onClick={handleSendWhatsApp} disabled={!completedOrder?.customerPhone} className="h-14 rounded-2xl font-bold bg-[#25D366] text-white shadow-[0_4px_15px_rgba(37,211,102,0.25)] hover:bg-[#1DA851] border-none text-[15px] active:scale-[0.98] transition-transform">
+                <MessageCircle className="h-5 w-5 mr-2" /> Share
               </Button>
             </div>
-            <Button onClick={() => setShowSuccessModal(false)} className="h-12 w-full rounded-xl bg-zinc-900 font-bold text-white shadow-sm hover:bg-zinc-800">
-              Start New Transaction
+            
+            <Button onClick={() => setShowSuccessModal(false)} className="h-14 w-full rounded-2xl bg-zinc-900 font-bold text-white shadow-sm hover:bg-zinc-800 text-[16px] active:scale-[0.98] transition-transform mt-1">
+              New Transaction
             </Button>
           </div>
         </DialogContent>
       </Dialog>
 
-      <ThermalReceipt order={completedOrder} source="billing" />
+      <ThermalReceipt order={completedOrder} source="billing" printerSize={printerSize} isEstimate={completedOrder?.is_estimate} />
     </AppLayout>
   );
 }

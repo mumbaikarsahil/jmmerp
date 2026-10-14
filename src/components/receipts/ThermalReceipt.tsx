@@ -28,7 +28,17 @@ const getNormalizedQtyForCost = (qty: number, displayUnit: string, dbBaseUnit: s
   return qty;
 };
 
-export const ThermalReceipt = ({ order, source = "billing" }: { order: any, source?: "billing" | "sales" }) => {
+export const ThermalReceipt = ({ 
+  order, 
+  source = "billing",
+  printerSize = "110mm",
+  isEstimate = false // Added flag for demo/estimate prints
+}: { 
+  order: any; 
+  source?: "billing" | "sales";
+  printerSize?: "80mm" | "110mm"; 
+  isEstimate?: boolean;
+}) => {
   const [mountNode, setMountNode] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -42,6 +52,9 @@ export const ThermalReceipt = ({ order, source = "billing" }: { order: any, sour
   }, []);
 
   if (!order || !mountNode) return null;
+
+  // Use prop flag or check if the order object itself contains the flag
+  const isDemoEstimate = isEstimate || order.is_estimate;
 
   const customerName = order.customerName || order.customers?.full_name || "Walk-in Customer";
   const customerPhone = order.customerPhone || order.customers?.phone_number || "";
@@ -113,7 +126,11 @@ export const ThermalReceipt = ({ order, source = "billing" }: { order: any, sour
     <div id="printable-receipt" className="hidden print:block">
       <style type="text/css" media="print">
         {`
-          @page { margin: 0; size: auto; }
+          /* DYNAMIC PAPER SIZE INJECTION */
+          @page { 
+            margin: 0; 
+            size: ${printerSize === "110mm" ? "106mm 297mm" : "78mm 297mm"}; 
+          }
           
           @media print {
             html, body, #root { 
@@ -135,7 +152,8 @@ export const ThermalReceipt = ({ order, source = "billing" }: { order: any, sour
               position: absolute !important;
               top: 0 !important;
               left: 0 !important;
-              width: 106mm !important; 
+              /* DYNAMIC WIDTH INJECTION */
+              width: ${printerSize === "110mm" ? "106mm" : "78mm"} !important; 
               max-width: 100vw !important;
               min-height: 100vh !important;
               background: #ffffff !important;
@@ -151,6 +169,19 @@ export const ThermalReceipt = ({ order, source = "billing" }: { order: any, sour
             .thermal-print-section * { visibility: visible !important; color: #000000 !important; }
           }
 
+          /* ESTIMATE BANNER */
+          .estimate-banner {
+            text-align: center;
+            font-weight: 900;
+            font-size: 20px;
+            text-transform: uppercase;
+            border-bottom: 2px dashed black;
+            padding-bottom: 6px;
+            margin-bottom: 12px;
+            letter-spacing: 1px;
+            background: #f0f0f0;
+          }
+
           /* HTML CUSTOM MASALA HEADER */
           .custom-header { text-align: center; margin-bottom: 12px; border-bottom: 1px dashed black; padding-bottom: 10px; }
           .ch-top { display: flex; justify-content: space-between; align-items: flex-start; font-weight: 900; font-size: 15px; margin-bottom: 4px; }
@@ -159,16 +190,6 @@ export const ThermalReceipt = ({ order, source = "billing" }: { order: any, sour
           .ch-sub { font-size: 13px; font-weight: bold; line-height: 1.3; margin: 3px 0; }
           .gst-band { background: black !important; color: white !important; padding: 5px 2px; margin-top: 10px; font-size: 13px; font-weight: bold; border-radius: 4px; display: flex; justify-content: space-around; align-items: center; }
           .gst-band * { color: white !important; }
-
-          /* HTML CUSTOM MASALA FOOTER */
-          .custom-footer { margin-top: 15px; display: flex; flex-direction: column; align-items: center; page-break-inside: avoid !important; }
-          .cf-band { background: black !important; color: white !important; border-radius: 20px; padding: 6px 12px; font-weight: bold; font-size: 15px; margin-bottom: 10px; width: 100%; text-align: center; }
-          .cf-band * { color: white !important; }
-          .cf-website { font-size: 16px; font-weight: bold; margin-bottom: 8px; }
-          .cf-socials { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px; font-size: 14px; font-weight: bold; }
-          .cf-social-item { display: flex; align-items: center; gap: 4px; }
-          .cf-icon { width: 16px; height: 16px; fill: black; }
-          .cf-icon-outline { width: 16px; height: 16px; fill: none; stroke: black; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
           /* TEXT ONLY HEADER (Normal Bills) */
           .text-header { text-align: center; margin-bottom: 12px; border-bottom: 1px dashed black; padding-bottom: 10px; }
@@ -200,10 +221,32 @@ export const ThermalReceipt = ({ order, source = "billing" }: { order: any, sour
           .receipt-footer { margin-top: 15px; text-align: center; font-size: 14px; border-top: 1px dashed black; padding-top: 10px; page-break-inside: avoid !important; }
           .receipt-footer .thank-you { font-weight: bold; margin-bottom: 2px; }
           .receipt-footer .notes { margin-top: 8px; font-weight: bold; font-size: 14px; border: 1px dashed black; padding: 6px; display: inline-block; word-break: break-word; max-width: 100%; }
+
+          /* HTML CUSTOM MASALA FOOTER & QR CODE */
+          .custom-footer { margin-top: 15px; display: flex; flex-direction: column; align-items: center; page-break-inside: avoid !important; }
+          .cf-band { background: black !important; color: white !important; border-radius: 20px; padding: 6px 12px; font-weight: bold; font-size: 15px; margin-bottom: 10px; width: 100%; text-align: center; }
+          .cf-band * { color: white !important; }
+          .cf-website { font-size: 16px; font-weight: bold; margin-bottom: 8px; }
+          .cf-socials { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px; font-size: 14px; font-weight: bold; }
+          .cf-social-item { display: flex; align-items: center; gap: 4px; }
+          .cf-icon { width: 16px; height: 16px; fill: black; }
+          .cf-icon-outline { width: 16px; height: 16px; fill: none; stroke: black; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+          .qr-section { margin-top: 20px; text-align: center; border-top: 1px dashed black; padding-top: 15px; page-break-inside: avoid !important; }
+          .qr-image { width: 140px; height: 140px; margin: 0 auto; object-fit: contain; filter: grayscale(100%) contrast(1.2); }
+          .qr-text { font-size: 15px; font-weight: 900; margin-top: 5px; text-transform: uppercase; letter-spacing: 1px; }
         `}
       </style>
       
       <div className="thermal-print-section">
+        
+        {/* ESTIMATE BANNER (Only renders if demo print) */}
+        {isDemoEstimate && (
+          <div className="estimate-banner">
+            ESTIMATE / QUOTATION
+          </div>
+        )}
+
         {/* CONDITIONAL HEADER */}
         {isCustomMasalaBill ? (
           <div className="custom-header">
@@ -215,17 +258,19 @@ export const ThermalReceipt = ({ order, source = "billing" }: { order: any, sour
               </div>
             </div>
             
-            <img src="/logo.png" alt="JMM Logo" className="ch-logo" />
+            <img src="/jmmlogo.png" alt="JMM Logo" className="ch-logo" />
             <h1 className="ch-title">जय महाराष्ट्र मसाले</h1>
             
             <p className="ch-sub">आमच्या येथे सर्व प्रकारचे अखंड मिरची आणि गरम मसाले भाजून व कुटून मिळतील.</p>
             <p className="ch-sub">दुकान नं. 3, बावला मस्जिद शेजारी, डिलाईल रोड, ना.म. जोशी मार्ग, करीरोड (प), मुंबई-13.</p>
             
-            <div className="gst-band">
-              <span>GSTIN : 27AAKPG4562D1ZU</span>
-              <span>•</span>
-              <span>FSSAI NO. : 11518004000348</span>
-            </div>
+            {!isDemoEstimate && (
+              <div className="gst-band">
+                <span>GSTIN : 27AAKPG4562D1ZU</span>
+                <span>•</span>
+                <span>FSSAI NO. : 11518004000348</span>
+              </div>
+            )}
           </div>
         ) : (
           <div className="text-header">
@@ -238,7 +283,7 @@ export const ThermalReceipt = ({ order, source = "billing" }: { order: any, sour
         
         <div className="meta-header">
           <span className="whitespace-nowrap">No: {order.order_number}</span>
-          <span className="whitespace-nowrap">Mode: {orderMode.replace('_', ' ')}</span>
+          {!isDemoEstimate && <span className="whitespace-nowrap">Mode: {orderMode.replace('_', ' ')}</span>}
           <span className="whitespace-nowrap">Date: {dateStr}</span>
         </div>
 
@@ -288,39 +333,46 @@ export const ThermalReceipt = ({ order, source = "billing" }: { order: any, sour
               <td className="td-paise">00</td>
             </tr>
 
-            <tr>
-              <td className="td-item" colSpan={2}>जमा रक्कम</td>
-              <td className="td-rs">{advancePaid}</td>
-              <td className="td-paise">00</td>
-            </tr>
+            {/* HIDE ADVANCE & DUE IF THIS IS JUST AN ESTIMATE */}
+            {!isDemoEstimate && (
+              <>
+                <tr>
+                  <td className="td-item" colSpan={2}>जमा रक्कम</td>
+                  <td className="td-rs">{advancePaid}</td>
+                  <td className="td-paise">00</td>
+                </tr>
 
-            {paymentsList.length > 0 && paymentsList.map((payment: any, i: number) => (
-              <tr key={`pay-${i}`} className="payment-breakdown">
-                <td className="td-item text-right pr-4" colSpan={2}>via {payment.payment_method || payment.method}</td>
-                <td className="td-rs">{payment.amount}</td>
-                <td className="td-paise">00</td>
-              </tr>
-            ))}
+                {paymentsList.length > 0 && paymentsList.map((payment: any, i: number) => (
+                  <tr key={`pay-${i}`} className="payment-breakdown">
+                    <td className="td-item text-right pr-4" colSpan={2}>via {payment.payment_method || payment.method}</td>
+                    <td className="td-rs">{payment.amount}</td>
+                    <td className="td-paise">00</td>
+                  </tr>
+                ))}
 
-            <tr className="totals-row">
-              <td className="td-item" colSpan={2}>एकूण शिल्लक (Due)</td>
-              <td className="td-rs">{balanceDue}</td>
-              <td className="td-paise">00</td>
-            </tr>
+                <tr className="totals-row">
+                  <td className="td-item" colSpan={2}>एकूण शिल्लक (Due)</td>
+                  <td className="td-rs">{balanceDue}</td>
+                  <td className="td-paise">00</td>
+                </tr>
+              </>
+            )}
           </tbody>
         </table>
 
         <div className="receipt-footer">
           {orderNotes && <div className="notes">Note: {orderNotes}</div>}
-          <div className="thank-you">Thank you for shopping! Visit again.</div>
+          <div className="thank-you">
+            {isDemoEstimate ? "This is an estimate only." : "Thank you for shopping! Visit again."}
+          </div>
           
           {/* CONDITIONAL PURE HTML FOOTER */}
-          {isCustomMasalaBill && (
+          {isCustomMasalaBill && !isDemoEstimate && (
             <div className="custom-footer">
               <div className="cf-band">
                 सर्व प्रकारचे मसाले ऑर्डर प्रमाणे बनवून मिळतील.
               </div>
-              <div className="cf-website">Visit us.: www.jmmspices.in</div>
+              <div className="cf-website">Visit us: www.jmmspices.in</div>
               <div className="cf-socials">
                 <span>Follow us on :</span>
                 
@@ -341,8 +393,15 @@ export const ThermalReceipt = ({ order, source = "billing" }: { order: any, sour
                   </svg>
                   <span>the_jmm_curryroad</span>
                 </div>
-
               </div>
+            </div>
+          )}
+          
+          {/* UPI QR CODE FOR ACTUAL BILLS */}
+          {!isDemoEstimate && balanceDue > 0 && (
+            <div className="qr-section">
+              <img src="/upi-qr.png" alt="Scan to Pay via UPI" className="qr-image" />
+              <div className="qr-text">Scan to Pay via UPI</div>
             </div>
           )}
         </div>

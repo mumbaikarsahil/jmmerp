@@ -21,13 +21,14 @@ const AVAILABLE_ICONS: Record<string, any> = {
   FlaskConical, Package, Nut, Scale, Sparkles, Gift, Flame, Star, Tag, ShoppingBag, FolderHeart 
 };
 
+// Modern, soft color themes for quick visual recognition
 const COLOR_THEMES = {
-  emerald: { text: "text-emerald-600", bg: "bg-emerald-100" },
-  rose: { text: "text-rose-600", bg: "bg-rose-100" },
-  amber: { text: "text-amber-600", bg: "bg-amber-100" },
-  blue: { text: "text-blue-600", bg: "bg-blue-100" },
-  purple: { text: "text-purple-600", bg: "bg-purple-100" },
-  orange: { text: "text-orange-600", bg: "bg-orange-100" },
+  emerald: { bg: "bg-emerald-50/50", border: "border-emerald-200/60", hover: "hover:bg-emerald-50", text: "text-emerald-600", textDark: "text-emerald-900" },
+  rose: { bg: "bg-rose-50/50", border: "border-rose-200/60", hover: "hover:bg-rose-50", text: "text-rose-600", textDark: "text-rose-900" },
+  amber: { bg: "bg-amber-50/50", border: "border-amber-200/60", hover: "hover:bg-amber-50", text: "text-amber-600", textDark: "text-amber-900" },
+  blue: { bg: "bg-blue-50/50", border: "border-blue-200/60", hover: "hover:bg-blue-50", text: "text-blue-600", textDark: "text-blue-900" },
+  purple: { bg: "bg-purple-50/50", border: "border-purple-200/60", hover: "hover:bg-purple-50", text: "text-purple-600", textDark: "text-purple-900" },
+  orange: { bg: "bg-orange-50/50", border: "border-orange-200/60", hover: "hover:bg-orange-50", text: "text-orange-600", textDark: "text-orange-900" },
 };
 
 const DEFAULT_TILES = [
@@ -53,23 +54,20 @@ const Index = () => {
   const [tenantId, setTenantId] = useState<string | null>(null);
   
   const [isLoading, setIsLoading] = useState(true);
-  const [greeting, setGreeting] = useState("");
   
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isListening, setIsListening] = useState(false);
 
-  // Customization State
   const [isCustomizing, setIsCustomizing] = useState(false);
   const [quickTiles, setQuickTiles] = useState<any[]>([]);
   const [secondaryCategories, setSecondaryCategories] = useState<string[]>([]);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
 
-  // Forms for new custom additions
   const [newTileName, setNewTileName] = useState("");
   const [newTileIcon, setNewTileIcon] = useState("Sparkles");
-  const [newTileColor, setNewTileColor] = useState("orange");
+  const [newTileColor, setNewTileColor] = useState("blue");
   const [newCategoryName, setNewCategoryName] = useState("");
 
   const isOwner = userRole === "owner" || isSuperAdmin;
@@ -102,15 +100,9 @@ const Index = () => {
     };
     
     initializeUser();
-
-    const hour = new Date().getHours();
-    if (hour < 12) setGreeting(t('good_morning'));
-    else if (hour < 17) setGreeting(t('good_afternoon'));
-    else setGreeting(t('good_evening'));
-  }, [t]);
+  }, []);
 
   const loadTenantDashboardConfig = async (tId: string) => {
-    // 1. Instant optimistic load from localStorage
     const cached = localStorage.getItem(`jmm_dashboard_${tId}`);
     if (cached) {
       try {
@@ -123,7 +115,6 @@ const Index = () => {
       setSecondaryCategories(DEFAULT_CATEGORIES);
     }
 
-    // 2. Fetch fresh global configuration from Supabase
     try {
       const { data: tenantData } = await (supabase as any)
         .from("tenants")
@@ -161,9 +152,9 @@ const Index = () => {
 
       setIsSavingConfig(false);
       if (error) {
-        toast({ title: "Sync Error", description: "Failed to sync config across store devices.", variant: "destructive" });
+        toast({ title: t('sync_error') || "Sync Error", description: t('sync_error_desc') || "Failed to sync config.", variant: "destructive" });
       } else {
-        toast({ title: "Dashboard Saved", description: "Updated across all staff devices." });
+        toast({ title: t('saved') || "Saved", description: t('layout_updated') || "Layout updated." });
       }
     }
   };
@@ -235,7 +226,7 @@ const Index = () => {
         .select('id, item_name, category')
         .eq('tenant_id', tenantId)
         .or(orQueryString)
-        .limit(6);
+        .limit(10);
 
       setSearchResults([
         ...routes,
@@ -255,29 +246,29 @@ const Index = () => {
   }, [searchQuery, userRole, tenantId]);
 
   const baseMenuOptions = [
-    { href: "/billing", label: t('billing'), icon: ShoppingCart, description: "Fast checkout counter", allowedRoles: ["owner", "admin", "manager", "sales"], iconBg: "bg-[#6366f1]" },
-    { href: "/inventory/add", label: "Add Stock", icon: PlusCircle, description: "Inward shipments", allowedRoles: ["owner", "admin", "manager"], iconBg: "bg-[#3b82f6]" },
-    { href: "/udhaar", label: "Due / Advance", icon: BookUser, description: "Pending store balances", allowedRoles: ["owner", "admin", "manager"], iconBg: "bg-[#14b8a6]" },
-    { href: "/manage", label: t('inventory'), icon: Boxes, description: "Stock and catalog manager", allowedRoles: ["owner", "admin", "manager"], iconBg: "bg-[#27272a]" },
-    { href: "/sales", label: t('sales'), icon: TrendingUp, description: "Store transactions ledger", allowedRoles: ["owner", "admin", "manager"], iconBg: "bg-[#10b981]" },
-    { href: "/crm", label: "Discovery", icon: Users, description: "Customer relationships", allowedRoles: ["owner", "admin", "manager"], iconBg: "bg-[#f97316]" },
-    { href: "/analytics", label: "Analytics", icon: BarChart3, description: "Store performance metrics", allowedRoles: ["owner", "admin", "manager"], iconBg: "bg-[#a855f7]" },
-    { href: "/settings", label: t('settings'), icon: Settings, description: "Hardware and terminal setup", allowedRoles: ["owner", "admin", "manager"], iconBg: "bg-[#57534e]" },
+    { href: "/billing", label: t('billing'), icon: ShoppingCart, description: t('desc_billing') || "Fast checkout counter", allowedRoles: ["owner", "admin", "manager", "sales"], iconBg: "bg-indigo-50 text-indigo-600 border border-indigo-100" },
+    { href: "/inventory/add", label: t('add_stock') || "Add Stock", icon: PlusCircle, description: t('desc_add_stock') || "Inward shipments", allowedRoles: ["owner", "admin", "manager"], iconBg: "bg-blue-50 text-blue-600 border border-blue-100" },
+    { href: "/udhaar", label: t('udhaar_book') || "Due / Advance", icon: BookUser, description: t('desc_udhaar_book') || "Pending store balances", allowedRoles: ["owner", "admin", "manager"], iconBg: "bg-teal-50 text-teal-600 border border-teal-100" },
+    { href: "/manage", label: t('inventory') || "Inventory", icon: Boxes, description: t('desc_inventory') || "Stock and catalog manager", allowedRoles: ["owner", "admin", "manager"], iconBg: "bg-zinc-100 text-zinc-700 border border-zinc-200" },
+    { href: "/sales", label: t('sales') || "Sales", icon: TrendingUp, description: t('desc_sales') || "Store transactions ledger", allowedRoles: ["owner", "admin", "manager"], iconBg: "bg-emerald-50 text-emerald-600 border border-emerald-100" },
+    { href: "/crm", label: t('discovery') || "Discovery", icon: Users, description: t('desc_discovery') || "Customer relationships", allowedRoles: ["owner", "admin", "manager"], iconBg: "bg-orange-50 text-orange-600 border border-orange-100" },
+    { href: "/analytics", label: t('analytics') || "Analytics", icon: BarChart3, description: t('desc_analytics') || "Store performance metrics", allowedRoles: ["owner", "admin", "manager"], iconBg: "bg-purple-50 text-purple-600 border border-purple-100" },
+    { href: "/settings", label: t('settings') || "Settings", icon: Settings, description: t('desc_settings') || "Hardware and terminal setup", allowedRoles: ["owner", "admin", "manager"], iconBg: "bg-stone-100 text-stone-600 border border-stone-200" },
   ];
 
   let visibleMenu = baseMenuOptions.filter(option => option.allowedRoles.includes(userRole));
 
   if (isSuperAdmin) {
-    visibleMenu.push({ href: "/super-admin-secret", label: "System Override", icon: ShieldAlert, description: "Root DB access", allowedRoles: ["owner", "admin"], iconBg: "bg-[#ef4444]" });
+    visibleMenu.push({ href: "/super-admin-secret", label: t('system_override') || "System Override", icon: ShieldAlert, description: t('desc_system_override') || "Root DB access", allowedRoles: ["owner", "admin"], iconBg: "bg-rose-50 text-rose-600 border border-rose-100" });
   }
 
   if (isLoading) {
     return (
       <AppLayout>
-        <div className="h-[calc(100vh-4rem)] flex items-center justify-center bg-[#fcfcfd]">
-          <div className="flex flex-col items-center gap-3">
-            <div className="animate-spin rounded-full h-6 w-6 border-2 border-zinc-200 border-t-zinc-900" />
-            <p className="text-zinc-500 font-bold text-xs uppercase tracking-wider">Loading Console...</p>
+        <div className="h-[calc(100vh-4rem)] flex items-center justify-center bg-zinc-50/50">
+          <div className="flex items-center gap-2 text-zinc-500">
+            <div className="animate-spin rounded-full h-4 w-4 border-2 border-zinc-300 border-t-zinc-600" />
+            <span className="font-medium text-sm">{t('loading_system') || "Loading System..."}</span>
           </div>
         </div>
       </AppLayout>
@@ -286,110 +277,121 @@ const Index = () => {
 
   return (
     <AppLayout>
-      <div className="min-h-screen bg-[#fcfcfd] font-sans pb-32">
-        <div className="px-4 sm:px-6 max-w-5xl mx-auto pt-3 sm:pt-5 animate-in fade-in duration-300">
+      <div className="min-h-screen bg-zinc-50/50 font-sans p-3 sm:p-6 pb-24">
+        <div className="max-w-6xl mx-auto space-y-6">
           
-          <div className="flex items-center gap-1.5 mb-1.5">
-            <Sparkles className="h-4 w-4 text-blue-500" />
-            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Store Console</span>
-          </div>
-
-          <div className="flex flex-col mb-3">
-            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight leading-tight">
-              <span className="bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 bg-clip-text text-transparent mr-1.5">
-                {greeting},
-              </span>
-              <span className="text-zinc-900">{userName.split(' ')[0]}</span>
-            </h1>
-          </div>
-
-          {!isSupabaseConfigured ? (
-            <Alert variant="destructive" className="mb-4 py-2 px-3 border-rose-200 bg-rose-50 text-rose-900 rounded-xl shadow-sm flex items-center">
-              <ShieldAlert className="h-4 w-4 shrink-0" />
-              <div className="ml-2.5 text-xs font-medium">
-                <strong className="font-bold">Alert:</strong> DB Disconnected. Check Anon Key.
+          {/* Header & Status (Modern UI) */}
+          <div className="bg-white border border-zinc-200/80 rounded-2xl shadow-sm p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 bg-indigo-50 border border-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center shrink-0">
+                <Boxes className="h-5 w-5" />
               </div>
-            </Alert>
-          ) : (
-            <div className="mb-4 py-2 px-3 border border-zinc-200/80 bg-white rounded-xl shadow-sm flex items-center justify-between text-xs font-medium text-zinc-600">
-              <div className="flex items-center">
-                <Megaphone className="h-3.5 w-3.5 text-violet-600 mr-2 shrink-0" />
-                <span className="truncate">Store terminal active. Synced with cloud.</span>
+              <div>
+                <h1 className="text-lg font-semibold text-zinc-900 tracking-tight leading-none">
+                  {t('store_console') || "Store Console"}
+                </h1>
+                <p className="text-xs font-medium text-zinc-500 mt-1">{t('logged_in_as') || "Logged in as"} {userName}</p>
               </div>
-              <button className="text-zinc-400 hover:text-zinc-600 shrink-0 ml-2"><X className="h-3.5 w-3.5" /></button>
             </div>
-          )}
+            
+            <div className="flex items-center gap-2 text-xs font-medium">
+              {!isSupabaseConfigured ? (
+                <span className="bg-rose-50 text-rose-700 border border-rose-100 px-3 py-2 rounded-lg flex items-center gap-1.5">
+                  <ShieldAlert className="h-4 w-4" /> {t('db_disconnected') || "Database Disconnected"}
+                </span>
+              ) : (
+                <span className="bg-emerald-50 text-emerald-700 border border-emerald-100 px-3 py-2 rounded-lg flex items-center gap-1.5">
+                  <Megaphone className="h-4 w-4" /> {t('system_synced') || "System Synced"}
+                </span>
+              )}
+            </div>
+          </div>
 
-          <div className="relative mb-6 z-20">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-5 w-5 text-blue-500" />
-            <Input 
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={t('search_placeholder')}
-              className="h-14 pl-11 pr-12 rounded-2xl border-zinc-200 shadow-sm bg-white text-base font-semibold placeholder:text-zinc-400 focus-visible:ring-2 focus-visible:ring-blue-500 transition-all"
-            />
+          {/* Search Bar - Structural & Clean */}
+          <div className="relative z-20 flex gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-zinc-400" />
+              <Input 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={t('search_placeholder') || "Search Item, Menu or Page..."}
+                className="h-12 pl-10 pr-12 rounded-xl border-zinc-200/80 bg-white text-zinc-800 font-medium text-sm shadow-sm focus-visible:ring-1 focus-visible:ring-zinc-900 transition-all"
+              />
+              <button 
+                onClick={startVoiceSearch} 
+                className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-2 rounded-lg transition-colors ${isListening ? 'bg-rose-100 text-rose-600 animate-pulse' : 'text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700'}`}
+              >
+                <Mic className="h-4.5 w-4.5" />
+              </button>
+            </div>
+            <Button 
+              className="h-12 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white font-medium shadow-sm px-6 shrink-0 transition-all active:scale-[0.98]"
+              onClick={() => {}}
+            >
+              {t('search') || "Search"}
+            </Button>
             
-            <button onClick={startVoiceSearch} className={`absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-xl transition-all ${isListening ? 'bg-rose-100 text-rose-600 animate-pulse' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-700'}`}>
-              <Mic className="h-4 w-4" />
-            </button>
-            
+            {/* Search Dropdown */}
             {searchQuery && (
-              <Card className="absolute top-full left-0 right-0 mt-2 overflow-hidden shadow-2xl border-zinc-200 rounded-2xl bg-white max-h-[300px] overflow-y-auto">
+              <div className="absolute top-full left-0 right-0 mt-2 overflow-hidden rounded-xl border border-zinc-200 bg-white max-h-[300px] overflow-y-auto shadow-lg">
                 {isSearching ? (
-                  <div className="p-4 text-center text-sm text-zinc-500 font-bold">Searching...</div>
+                  <div className="p-4 text-sm text-zinc-500 font-medium border-b border-zinc-100">{t('searching') || "Searching..."}</div>
                 ) : searchResults.length > 0 ? (
                   <div className="flex flex-col">
                     {searchResults.map((result, idx) => (
                       <button 
                         key={idx}
                         onClick={() => navigate(result.path)}
-                        className="flex items-center gap-3 p-4 hover:bg-zinc-50 text-left border-b border-zinc-100 last:border-0"
+                        className="flex items-center gap-3 p-3.5 hover:bg-zinc-50 text-left border-b border-zinc-100 last:border-0 transition-colors"
                       >
-                        <div className="h-10 w-10 rounded-xl bg-zinc-100 flex items-center justify-center shrink-0">
-                          <result.icon className="h-5 w-5 text-zinc-600" />
+                        <div className="h-9 w-9 rounded-lg bg-zinc-100 border border-zinc-200/80 flex items-center justify-center shrink-0">
+                          <result.icon className="h-4.5 w-4.5 text-zinc-600" />
                         </div>
                         <div>
-                          <p className="font-bold text-zinc-900 text-sm">{result.name}</p>
-                          <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mt-0.5">
-                            {result.type === 'route' ? 'System App' : result.category || 'Product Catalog'}
+                          <p className="font-semibold text-zinc-900 text-sm leading-tight">{result.name}</p>
+                          <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wide mt-0.5">
+                            {result.type === 'route' ? (t('system_app') || 'System App') : result.category || (t('product') || 'Product')}
                           </p>
                         </div>
                       </button>
                     ))}
                   </div>
                 ) : (
-                  <div className="p-4 text-center text-sm text-zinc-500 font-bold">No results found</div>
+                  <div className="p-4 text-sm text-zinc-500 font-medium">{t('no_results') || "No results found"}</div>
                 )}
-              </Card>
+              </div>
             )}
           </div>
 
-          {/* QUICK ACTIONS & SEASONAL FOLDERS */}
-          <div className="mb-8">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-[10px] font-bold text-zinc-400 uppercase tracking-[0.15em]">{t('quick_actions')}</h3>
-              
-              {/* RESTRICTED: OWNER-ONLY ACCESS */}
+          {/* QUICK ACTIONS */}
+          <div className="bg-white border border-zinc-200/80 rounded-2xl shadow-sm p-4 sm:p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">{t('quick_actions') || "Quick Actions"}</h3>
               {isOwner && (
                 <button 
                   onClick={() => setIsCustomizing(true)} 
-                  className="flex items-center gap-1.5 text-[11px] font-bold text-blue-600 bg-blue-50 px-2.5 py-1.5 rounded-xl border border-blue-200/80 hover:bg-blue-100 transition-colors shadow-sm"
+                  className="flex items-center gap-1.5 text-xs font-medium text-zinc-500 hover:text-zinc-900 transition-colors"
                 >
-                  <Settings2 className="h-3.5 w-3.5" /> Customize Layout
+                  <Settings2 className="h-4 w-4" /> {t('customize_layout') || "Customize Layout"}
                 </button>
               )}
             </div>
             
-            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3 mb-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3 mb-5">
               {quickTiles.map((tile) => {
                 const IconComponent = AVAILABLE_ICONS[tile.icon] || Package;
-                const colors = COLOR_THEMES[tile.color as keyof typeof COLOR_THEMES] || COLOR_THEMES.blue;
+                const theme = COLOR_THEMES[tile.color as keyof typeof COLOR_THEMES] || COLOR_THEMES.blue;
+                
                 return (
-                  <button key={tile.id} onClick={() => navigate(tile.path)} className="group relative overflow-hidden flex flex-col items-center justify-center p-4 rounded-[20px] bg-white border border-zinc-200/80 transition-all active:scale-95 shadow-sm hover:shadow-md hover:border-zinc-300">
-                    <div className={`h-12 w-12 rounded-2xl flex items-center justify-center mb-2.5 ${colors.bg} ${colors.text} group-hover:scale-110 transition-transform duration-300`}>
-                      <IconComponent className="h-6 w-6" />
-                    </div>
-                    <span className="font-bold text-[11px] text-zinc-800 text-center uppercase tracking-wide leading-tight">{tile.label}</span>
+                  <button 
+                    key={tile.id} 
+                    onClick={() => navigate(tile.path)} 
+                    className={`flex flex-col items-center justify-center p-3 h-24 border ${theme.border} ${theme.bg} ${theme.hover} rounded-xl transition-all active:scale-[0.98]`}
+                  >
+                    <IconComponent className={`h-6 w-6 ${theme.text} mb-2.5`} />
+                    <span className={`font-semibold text-xs ${theme.textDark} text-center leading-tight line-clamp-2`}>
+                      {tile.label}
+                    </span>
                   </button>
                 );
               })}
@@ -397,30 +399,40 @@ const Index = () => {
 
             <div className="flex flex-wrap gap-2">
               {secondaryCategories.map((cat, idx) => (
-                <button key={idx} onClick={() => navigate(`/billing?category=${encodeURIComponent(cat)}`)} className="flex items-center px-3 py-2 bg-white border border-zinc-200/80 rounded-[14px] text-xs font-bold text-zinc-600 shadow-sm hover:border-zinc-300 hover:shadow-md hover:text-zinc-900 active:scale-95 transition-all">
-                  {cat} <ChevronRight className="h-3.5 w-3.5 ml-1 text-zinc-400" />
+                <button 
+                  key={idx} 
+                  onClick={() => navigate(`/billing?category=${encodeURIComponent(cat)}`)} 
+                  className="flex items-center justify-center px-4 py-2 bg-white border border-zinc-200/80 rounded-lg text-[11px] font-medium text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900 transition-colors shadow-sm active:scale-[0.98]"
+                >
+                  {cat}
                 </button>
               ))}
             </div>
           </div>
 
-          <div className="mb-2.5"><h3 className="text-[10px] font-bold text-zinc-400 uppercase tracking-[0.15em]">Store Modules</h3></div>
+          {/* STORE MODULES */}
+          <div className="bg-white border border-zinc-200/80 rounded-2xl shadow-sm p-4 sm:p-5">
+            <div className="mb-4">
+              <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">{t('system_modules') || "System Modules"}</h3>
+            </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-            {visibleMenu.map((option, index) => (
-              <button key={index} onClick={() => navigate(option.href)} className="group outline-none text-left block h-full">
-                <Card className="h-full flex flex-col items-start justify-between p-3 sm:p-4 transition-all duration-200 rounded-[16px] border-zinc-200/80 bg-white shadow-sm hover:shadow-md hover:border-zinc-300 active:scale-95 cursor-pointer relative overflow-hidden">
-                  <div className="absolute -top-6 -right-6 w-20 h-20 bg-zinc-100 rounded-full blur-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
-                  <div className={`h-9 w-9 rounded-[10px] flex items-center justify-center mb-2.5 shadow-sm ${option.iconBg} text-white shrink-0 relative z-10`}>
-                    <option.icon className="h-4 w-4 sm:h-5 sm:w-5" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+              {visibleMenu.map((option, index) => (
+                <button 
+                  key={index} 
+                  onClick={() => navigate(option.href)} 
+                  className="flex items-start gap-3.5 p-4 bg-white border border-zinc-100 hover:border-zinc-200/80 hover:bg-zinc-50 hover:shadow-sm rounded-xl text-left transition-all active:scale-[0.98] group h-full"
+                >
+                  <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 shadow-sm ${option.iconBg}`}>
+                    <option.icon className="h-5 w-5" />
                   </div>
-                  <div className="w-full relative z-10">
-                    <h3 className="font-bold text-[12px] sm:text-[13px] tracking-tight text-zinc-900 leading-tight mb-0.5 truncate">{option.label}</h3>
-                    <p className="text-[9px] sm:text-[10px] font-semibold text-zinc-500 line-clamp-2 leading-snug">{option.description}</p>
+                  <div>
+                    <h3 className="font-semibold text-sm text-zinc-900 leading-tight mb-1 group-hover:text-indigo-600 transition-colors">{option.label}</h3>
+                    <p className="text-[11px] font-medium text-zinc-500 leading-snug">{option.description}</p>
                   </div>
-                </Card>
-              </button>
-            ))}
+                </button>
+              ))}
+            </div>
           </div>
 
         </div>
@@ -428,45 +440,40 @@ const Index = () => {
 
       {/* DASHBOARD CUSTOMIZATION ENGINE (OWNER ONLY) */}
       <Dialog open={isCustomizing && isOwner} onOpenChange={setIsCustomizing}>
-        <DialogContent className="sm:max-w-md w-[95vw] rounded-[32px] p-0 overflow-hidden bg-white shadow-2xl border-zinc-200 flex flex-col max-h-[90dvh]">
-          <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4 bg-zinc-50/50 shrink-0">
+        <DialogContent className="sm:max-w-md w-[95vw] rounded-2xl p-0 overflow-hidden bg-white border border-zinc-200 shadow-xl max-h-[90dvh]">
+          <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4 bg-zinc-50 shrink-0">
             <div>
-              <DialogTitle className="text-lg font-bold text-zinc-900">Dashboard Layout Manager</DialogTitle>
-              <p className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider mt-0.5">Owner Access Only • Cloud Synced</p>
+              <DialogTitle className="text-sm font-semibold text-zinc-900">{t('layout_manager') || "Layout Manager"}</DialogTitle>
+              <p className="text-[11px] font-medium text-zinc-500 mt-0.5">{t('edit_shortcuts') || "Edit store shortcuts"}</p>
             </div>
-            <button onClick={() => setIsCustomizing(false)} className="h-8 w-8 rounded-full hover:bg-zinc-200 flex items-center justify-center">
-              <X className="h-4 w-4 text-zinc-500"/>
+            <button onClick={() => setIsCustomizing(false)} className="h-8 w-8 rounded-lg hover:bg-zinc-200 flex items-center justify-center transition-colors">
+              <X className="h-4.5 w-4.5 text-zinc-500"/>
             </button>
           </div>
           
           <div className="flex-1 overflow-y-auto p-5 space-y-6">
             
             {/* Quick Tiles Manager */}
-            <div className="space-y-3">
-              <div className="flex justify-between items-center border-b border-zinc-100 pb-2">
-                <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-1.5">
-                  <Sparkles className="h-3.5 w-3.5 text-blue-500"/> Seasonal & Quick Action Tiles
-                </span>
-                {isSavingConfig && <span className="text-[10px] text-zinc-400 font-bold animate-pulse">Syncing...</span>}
+            <div>
+              <div className="flex justify-between items-center border-b border-zinc-100 pb-2 mb-3">
+                <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">{t('quick_action_tiles') || "Quick Action Tiles"}</span>
+                {isSavingConfig && <span className="text-[10px] text-indigo-600 font-medium">{t('saving') || "Saving..."}</span>}
               </div>
 
-              <div className="space-y-2 max-h-[28vh] overflow-y-auto pr-1">
+              <div className="space-y-2 max-h-[25vh] overflow-y-auto mb-4 pr-1">
                 {quickTiles.map(tile => {
                   const Icon = AVAILABLE_ICONS[tile.icon] || Package;
                   const theme = COLOR_THEMES[tile.color as keyof typeof COLOR_THEMES] || COLOR_THEMES.blue;
                   return (
-                    <div key={tile.id} className="flex justify-between items-center p-3 rounded-xl border border-zinc-200 bg-white shadow-sm">
+                    <div key={tile.id} className="flex justify-between items-center p-3 border border-zinc-100 rounded-xl bg-white shadow-sm hover:border-zinc-200 transition-colors">
                       <div className="flex items-center gap-3">
-                        <div className={`h-8 w-8 rounded-lg flex items-center justify-center ${theme.bg} ${theme.text}`}>
-                          <Icon className="h-4 w-4"/>
+                        <div className={`h-9 w-9 rounded-lg flex items-center justify-center border ${theme.border} ${theme.bg} ${theme.text}`}>
+                          <Icon className="h-4.5 w-4.5"/>
                         </div>
-                        <div>
-                          <span className="font-bold text-sm text-zinc-800 leading-none block">{tile.label}</span>
-                          <span className="text-[10px] text-zinc-400 font-medium">{tile.path}</span>
-                        </div>
+                        <span className="font-semibold text-sm text-zinc-800">{tile.label}</span>
                       </div>
-                      <button onClick={() => handleRemoveTile(tile.id)} className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors">
-                        <Trash2 className="h-4 w-4"/>
+                      <button onClick={() => handleRemoveTile(tile.id)} className="p-2 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors">
+                        <Trash2 className="h-4.5 w-4.5"/>
                       </button>
                     </div>
                   );
@@ -474,61 +481,61 @@ const Index = () => {
               </div>
 
               {/* Add New Tile Form */}
-              <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-3.5 space-y-3 mt-2 shadow-inner">
+              <div className="bg-zinc-50 border border-zinc-100 rounded-xl p-3.5 space-y-3">
                 <Input 
                   value={newTileName} 
                   onChange={e => setNewTileName(e.target.value)} 
-                  placeholder="Folder/Action Name (e.g. Diwali Offers)" 
-                  className="h-11 text-sm font-bold bg-white rounded-xl" 
+                  placeholder={t('action_name_placeholder') || "Action Name..."} 
+                  className="h-10 text-sm font-medium bg-white rounded-lg border-zinc-200 shadow-sm" 
                 />
                 <div className="flex gap-2">
                   <select 
                     value={newTileIcon} 
                     onChange={e => setNewTileIcon(e.target.value)} 
-                    className="h-11 flex-1 rounded-xl border border-zinc-200 bg-white text-xs font-bold px-2 shadow-sm"
+                    className="h-10 flex-1 border border-zinc-200 bg-white text-sm font-medium px-2.5 rounded-lg shadow-sm focus:outline-none"
                   >
                     {Object.keys(AVAILABLE_ICONS).map(name => <option key={name} value={name}>{name}</option>)}
                   </select>
                   <select 
                     value={newTileColor} 
                     onChange={e => setNewTileColor(e.target.value)} 
-                    className="h-11 flex-1 rounded-xl border border-zinc-200 bg-white text-xs font-bold px-2 shadow-sm capitalize"
+                    className="h-10 flex-1 border border-zinc-200 bg-white text-sm font-medium px-2.5 rounded-lg shadow-sm capitalize focus:outline-none"
                   >
                     {Object.keys(COLOR_THEMES).map(color => <option key={color} value={color}>{color}</option>)}
                   </select>
-                  <Button onClick={handleAddTile} disabled={!newTileName} className="h-11 px-5 bg-zinc-900 text-white font-bold rounded-xl active:scale-95">
-                    Add
+                  <Button onClick={handleAddTile} disabled={!newTileName} className="h-10 px-5 bg-zinc-900 text-white font-semibold rounded-lg text-sm hover:bg-zinc-800 shadow-sm transition-all active:scale-[0.98]">
+                    {t('add') || "Add"}
                   </Button>
                 </div>
               </div>
             </div>
 
             {/* Secondary Categories Manager */}
-            <div className="space-y-3">
-              <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-1.5 border-b border-zinc-100 pb-2">
-                <Tag className="h-3.5 w-3.5 text-blue-500"/> Secondary Category Filter Pills
-              </span>
+            <div>
+              <div className="border-b border-zinc-100 pb-2 mb-3">
+                <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">{t('category_buttons') || "Category Buttons"}</span>
+              </div>
               
-              <div className="flex flex-wrap gap-2 max-h-[20vh] overflow-y-auto">
+              <div className="flex flex-wrap gap-2 max-h-[20vh] overflow-y-auto mb-4">
                 {secondaryCategories.map(cat => (
-                  <div key={cat} className="flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 bg-white border border-zinc-200 rounded-xl shadow-sm">
-                    <span className="text-xs font-bold text-zinc-700">{cat}</span>
-                    <button onClick={() => handleRemoveCategory(cat)} className="p-1 hover:bg-rose-50 text-zinc-400 hover:text-rose-500 rounded-lg">
-                      <X className="h-3 w-3"/>
+                  <div key={cat} className="flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 bg-white border border-zinc-200/80 rounded-lg shadow-sm">
+                    <span className="text-xs font-medium text-zinc-700">{cat}</span>
+                    <button onClick={() => handleRemoveCategory(cat)} className="text-zinc-400 hover:bg-rose-50 hover:text-rose-600 p-1 rounded-md transition-colors">
+                      <X className="h-3.5 w-3.5"/>
                     </button>
                   </div>
                 ))}
               </div>
               
-              <div className="flex gap-2 pt-1">
+              <div className="flex gap-2">
                 <Input 
                   value={newCategoryName} 
                   onChange={e => setNewCategoryName(e.target.value)} 
-                  placeholder="Category Name (e.g. Dryfruits Gift Packs)..." 
-                  className="h-11 text-sm font-bold bg-white rounded-xl" 
+                  placeholder={t('category_name_placeholder') || "Category Name..."}
+                  className="h-10 text-sm font-medium bg-white rounded-lg border-zinc-200 shadow-sm" 
                 />
-                <Button onClick={handleAddCategory} disabled={!newCategoryName} className="h-11 px-5 bg-zinc-900 text-white font-bold rounded-xl active:scale-95">
-                  Add
+                <Button onClick={handleAddCategory} disabled={!newCategoryName} className="h-10 px-5 bg-zinc-900 text-white font-semibold rounded-lg text-sm hover:bg-zinc-800 shadow-sm transition-all active:scale-[0.98]">
+                  {t('add') || "Add"}
                 </Button>
               </div>
             </div>

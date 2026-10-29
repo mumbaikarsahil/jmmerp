@@ -9,12 +9,16 @@ import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescript
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
+import { useLanguage } from "@/contexts/LanguageContext";
 import {
   Calendar as CalendarIcon, Banknote, ShoppingBag, ArrowUpRight, ArrowDownLeft, Filter, 
-  MessageCircle, WalletCards, Eye, Trash2, ChevronDown, ChevronUp, Printer, X
+  MessageCircle, WalletCards, Eye, Trash2, ChevronDown, ChevronUp, Printer, X, CreditCard,
+  Search
 } from "lucide-react";
 import { format } from "date-fns";
 import { ThermalReceipt } from "@/components/receipts/ThermalReceipt";
+import { Input } from "@/components/ui/input";
+import { useNavigate } from "react-router-dom";
 
 type OrderWithDetails = {
   id: string;
@@ -23,6 +27,7 @@ type OrderWithDetails = {
   total_amount: number;
   payment_status: 'PAID' | 'PENDING' | 'PARTIAL';
   status: string;
+  source: string;
   customers?: { full_name: string | null; phone_number: string | null } | null;
   order_items: {
     id: string;
@@ -45,46 +50,13 @@ type OrderWithDetails = {
   totalMixWeightKg?: number;
 };
 
-// EXACT JMM STRICT SEQUENCE (Updated with new sorting & spelling fallbacks)
 const MASALA_SEQUENCE = [
-  "बेडगी", 
-  "लवंगी", "गावठी", 
-  "काश्मिरी", 
-  "संकेश्वरी", "निप्पाणी", 
-  "मिरची", 
-  "धने", "धणे", 
-  "हळकुंड", 
-  "मिरी", 
-  "बडिशेप", "बडीशेप", 
-  "जिरा", 
-  "तिळ", 
-  "खसखस", 
-  "लवंग", 
-  "दालचिनी", 
-  "लालफुल", 
-  "चक्रिफुल", 
-  "मसाला वेलची", 
-  "दगडफुल", 
-  "तेजपान", 
-  "शहाजिरे", 
-  "जायफळ", 
-  "जायपत्री", 
-  "त्रिफळ", 
-  "नागकेशर", 
-  "कबाब चिनी", 
-  "पिंपरी", "पिंपळी",
-  "हिंग", 
-  "मेथी", 
-  "राई", 
-  "सुंठ", 
-  "हिरवी वेलची", 
-  "गुलाब पाकळी", 
-  "कसुरी मेथी", 
-  "ओवा", 
-  "खोबरा", 
-  "लसूण", 
-  "मीठ", 
-  "तेल"
+  "बेडगी", "लवंगी", "गावठी", "काश्मिरी", "संकेश्वरी", "निप्पाणी", "मिरची", 
+  "धने", "धणे", "हळकुंड", "मिरी", "बडिशेप", "बडीशेप", "जिरा", "तिळ", 
+  "खसखस", "लवंग", "दालचिनी", "लालफुल", "चक्रिफुल", "मसाला वेलची", "दगडफुल", 
+  "तेजपान", "शहाजिरे", "जायफळ", "जायपत्री", "त्रिफळ", "नागकेशर", "कबाब चिनी", 
+  "पिंपरी", "पिंपळी", "हिंग", "मेथी", "राई", "सुंठ", "हिरवी वेलची", 
+  "गुलाब पाकळी", "कसुरी मेथी", "ओवा", "खोबरा", "लसूण", "मीठ", "तेल"
 ];
 
 const normalizeUnitStr = (str: string) => String(str || "").toLowerCase().trim();
@@ -104,17 +76,36 @@ const getNormalizedQtyForCost = (qty: number, displayUnit: string, dbBaseUnit: s
 };
 
 export default function Sales() {
+  const { t } = useLanguage();
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [currentTenantId, setCurrentTenantId] = useState<string | null>(null);
   const [tenantName, setTenantName] = useState<string>("Our Store");
-  const [dateRange, setDateRange] = useState<{ from: Date; to?: Date }>({ from: new Date(), to: new Date() });
+  
+  // DEFAULT TO CURRENT MONTH
+  const [dateRange, setDateRange] = useState<{ from: Date; to?: Date }>(() => {
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+    return { from: firstDay, to: now };
+  });
+  
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [sourceFilter, setSourceFilter] = useState<string>("ALL");
+  const [searchQuery, setSearchQuery] = useState("");
+
   const [orders, setOrders] = useState<OrderWithDetails[]>([]);
   const [loading, setLoading] = useState(true);
   
+  // PAGINATION STATE
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 50;
+
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
   const [voidingOrder, setVoidingOrder] = useState<OrderWithDetails | null>(null);
   const [previewOrder, setPreviewOrder] = useState<OrderWithDetails | null>(null);
+
+  // Reset page to 1 when filters change
+  useEffect(() => { setCurrentPage(1); }, [statusFilter, sourceFilter, searchQuery, dateRange]);
 
   useEffect(() => {
     const init = async () => {
@@ -138,32 +129,59 @@ export default function Sales() {
       const start = new Date(dateRange.from); start.setHours(0, 0, 0, 0);
       const end = new Date(dateRange.to || dateRange.from); end.setHours(23, 59, 59, 999);
 
-      const { data, error } = await (supabase as any)
-        .from('orders')
-        .select(`
-          id, order_number, created_at, total_amount, payment_status, status,
-          customers ( full_name, phone_number ),
-          order_items ( id, quantity, price_at_order, items ( item_name, base_unit, item_type, selling_price ) ),
-          payments ( amount, payment_method )
-        `)
-        .eq("tenant_id", tenantId) 
-        .gte('created_at', start.toISOString())
-        .lte('created_at', end.toISOString())
-        .order('created_at', { ascending: false });
+      // 1. Fetch ALL orders bypassing the 1000 limit via chunking
+      let allOrders: any[] = [];
+      let isFetchingOrders = true;
+      let pageIndex = 0;
+      const CHUNK_SIZE = 1000;
 
-      if (error) throw error;
+      while (isFetchingOrders) {
+        const { data, error } = await (supabase as any)
+          .from('orders')
+          .select(`
+            id, order_number, created_at, total_amount, payment_status, status, source,
+            customers ( full_name, phone_number ),
+            order_items ( id, quantity, price_at_order, items ( item_name, base_unit, item_type, selling_price ) ),
+            payments ( amount, payment_method )
+          `)
+          .eq("tenant_id", tenantId) 
+          .gte('created_at', start.toISOString())
+          .lte('created_at', end.toISOString())
+          .order('created_at', { ascending: false })
+          .range(pageIndex * CHUNK_SIZE, (pageIndex + 1) * CHUNK_SIZE - 1);
 
-      const { data: ingredientsData } = await (supabase as any)
-        .from('order_item_ingredients')
-        .select('order_item_id, custom_quantity, unit, items (item_name, base_unit, selling_price)')
-        .in('order_item_id', data.flatMap((o: any) => o.order_items.map((oi: any) => oi.id)));
+        if (error) throw error;
 
-      const formattedOrders: OrderWithDetails[] = (data || []).map((order: any) => {
+        if (data && data.length > 0) {
+          allOrders = [...allOrders, ...data];
+          if (data.length < CHUNK_SIZE) isFetchingOrders = false;
+          else pageIndex++;
+        } else {
+          isFetchingOrders = false;
+        }
+      }
+
+      // 2. Fetch ALL ingredients safely bypassing the PostgreSQL "IN" clause limits
+      let allIngredients: any[] = [];
+      const allOrderItemIds = allOrders.flatMap(o => o.order_items.map((oi: any) => oi.id));
+      
+      for (let i = 0; i < allOrderItemIds.length; i += 500) {
+        const chunkIds = allOrderItemIds.slice(i, i + 500);
+        const { data: ingData } = await (supabase as any)
+          .from('order_item_ingredients')
+          .select('order_item_id, custom_quantity, unit, items (item_name, base_unit, selling_price)')
+          .in('order_item_id', chunkIds);
+        
+        if (ingData) allIngredients = [...allIngredients, ...ingData];
+      }
+
+      // 3. Format complete dataset
+      const formattedOrders: OrderWithDetails[] = allOrders.map((order: any) => {
         const amountPaid = order.payments?.reduce((sum: number, p: any) => sum + Number(p.amount), 0) || 0;
         
         let totalMixWeight = 0;
         const mappedItems = order.order_items.map((oi: any) => {
-           const ings = (ingredientsData || []).filter((ing: any) => ing.order_item_id === oi.id);
+           const ings = allIngredients.filter((ing: any) => ing.order_item_id === oi.id);
            totalMixWeight += ings.reduce((s: number, i: any) => s + (['piece','nug','pcs'].includes(normalizeUnitStr(i.unit)) ? 0 : (['g','gm'].includes(normalizeUnitStr(i.unit)) ? i.custom_quantity / 1000 : i.custom_quantity)), 0);
            return { ...oi, order_item_ingredients: ings };
         });
@@ -184,9 +202,9 @@ export default function Sales() {
 
   const shareOnWhatsApp = (order: OrderWithDetails) => {
     const phone = order.customers?.phone_number;
-    if (!phone) return toast({ title: "No Phone Found", variant: "destructive" });
+    if (!phone) return toast({ title: t('no_phone_found') || "No Phone Found", variant: "destructive" });
     const invoiceLink = `https://retail.biillo.com/#/invoice/${order.id}`;
-    const message = encodeURIComponent(`🙏 Thank you for shopping at *${tenantName}*!\n\n🧾 Order No: ${order.order_number}\n💰 Total Amount: ₹${Math.abs(order.total_amount)}\n\nView your E-Receipt here:\n${invoiceLink}`);
+    const message = encodeURIComponent(`🙏 ${t('thank_you_shopping') || "Thank you for shopping at"} *${tenantName}*!\n\n🧾 ${t('order_no') || "Order No"}: ${order.order_number}\n💰 ${t('total_amount') || "Total Amount"}: ₹${Math.abs(order.total_amount)}\n\nView your E-Receipt here:\n${invoiceLink}`);
     window.open(`https://wa.me/91${phone.replace(/\D/g, '')}?text=${message}`, "_blank");
   };
 
@@ -196,13 +214,37 @@ export default function Sales() {
     try {
       const { error } = await (supabase as any).from('orders').delete().eq('id', voidingOrder.id).eq('tenant_id', currentTenantId);
       if (error) throw error;
-      toast({ title: "Bill Voided", description: `Order ${voidingOrder.order_number} has been permanently removed.` });
+      toast({ title: t('bill_voided') || "Bill Voided", description: `Order ${voidingOrder.order_number} has been removed.` });
       setVoidingOrder(null); fetchSalesData(currentTenantId);
-    } catch (error: any) { toast({ title: "Failed to void bill", description: error.message, variant: "destructive" }); } finally { setLoading(false); }
+    } catch (error: any) { toast({ title: t('failed_to_void') || "Failed to void bill", description: error.message, variant: "destructive" }); } finally { setLoading(false); }
   };
 
-  const filteredOrders = useMemo(() => statusFilter === "ALL" ? orders : orders.filter(o => o.payment_status === statusFilter), [orders, statusFilter]);
+  const filteredOrders = useMemo(() => {
+    return orders.filter(o => {
+      if (statusFilter !== "ALL" && o.payment_status !== statusFilter) return false;
+      if (sourceFilter !== "ALL" && o.source !== sourceFilter) return false;
+      
+      if (searchQuery.trim() !== "") {
+        const query = searchQuery.toLowerCase();
+        const matchesName = o.customers?.full_name?.toLowerCase().includes(query) || false;
+        const matchesPhone = o.customers?.phone_number?.includes(query) || false;
+        const matchesOrderNo = o.order_number.toLowerCase().includes(query) || false;
+        
+        if (!matchesName && !matchesPhone && !matchesOrderNo) return false;
+      }
+      return true;
+    });
+  }, [orders, statusFilter, sourceFilter, searchQuery]);
 
+  // Derive Paginated Orders for UI performance
+  const paginatedOrders = useMemo(() => {
+    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+    return filteredOrders.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+  }, [filteredOrders, currentPage]);
+
+  const totalPages = Math.ceil(filteredOrders.length / ITEMS_PER_PAGE);
+
+  // Stats calculate correctly across ALL filtered orders, regardless of current pagination page
   const stats = useMemo(() => filteredOrders.reduce((acc, order) => {
     const isReturn = order.total_amount < 0;
     acc.grossRevenue += order.total_amount; 
@@ -219,21 +261,33 @@ export default function Sales() {
 
   return (
     <AppLayout>
-      <div className="w-full bg-[#fcfcfd] min-h-screen">
+      <div className="w-full bg-zinc-50/50 min-h-screen">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6 animate-fade-in pb-24 md:pb-12 font-sans print:hidden">
           
-          <div className="flex flex-col md:flex-row justify-between gap-4 pb-3 sm:pb-4 border-b border-zinc-100">
+          <div className="flex flex-col lg:flex-row justify-between gap-4 pb-4 border-b border-zinc-200/80">
             <div className="flex flex-col justify-center min-w-0">
-              <h1 className="text-lg sm:text-xl font-bold tracking-tight text-zinc-900 leading-none truncate">Revenue Ledger</h1>
-              <p className="text-[11px] sm:text-xs font-semibold text-zinc-500 mt-1.5 hidden sm:block truncate">Analyze sales performance, transactions, and pending balances.</p>
+              <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-zinc-900 leading-none truncate">{t('revenue_ledger') || "Revenue Ledger"}</h1>
+              <p className="text-xs font-medium text-zinc-500 mt-1.5 hidden sm:block truncate">{t('sales_desc') || "Analyze sales performance, transactions, and pending balances."}</p>
             </div>
-            <div className="flex flex-col sm:flex-row items-center gap-2 shrink-0 w-full md:w-auto">
-              <div className="w-full sm:w-auto flex-1 sm:max-w-xs">
+            
+            <div className="flex flex-col sm:flex-row items-center gap-3 shrink-0 w-full lg:w-auto">
+              
+              <div className="relative w-full sm:w-64">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                <Input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={t('search_customer') || "Search name or phone..."}
+                  className="w-full h-11 pl-9 pr-4 rounded-xl border-zinc-200/80 bg-white text-zinc-900 text-sm font-medium shadow-sm focus-visible:ring-1 focus-visible:ring-zinc-900"
+                />
+              </div>
+
+              <div className="w-full sm:w-auto">
                 <Popover>
                   <PopoverTrigger asChild>
-                    <Button variant="outline" className="w-full justify-start h-10 font-bold text-xs border-zinc-200 shadow-sm text-zinc-800 hover:bg-zinc-50 rounded-xl transition-all">
-                      <CalendarIcon className="mr-2 h-3.5 w-3.5 text-zinc-400 shrink-0" />
-                      <span className="truncate">{dateRange.from ? (dateRange.to ? <>{format(dateRange.from, "LLL dd")} - {format(dateRange.to, "LLL dd, y")}</> : format(dateRange.from, "LLL dd, y")) : <span>Select Date Range</span>}</span>
+                    <Button variant="outline" className="w-full justify-start h-11 font-medium text-sm border-zinc-200/80 shadow-sm text-zinc-800 hover:bg-zinc-50 rounded-xl transition-all">
+                      <CalendarIcon className="mr-2 h-4 w-4 text-zinc-400 shrink-0" />
+                      <span className="truncate">{dateRange.from ? (dateRange.to ? <>{format(dateRange.from, "LLL dd")} - {format(dateRange.to, "LLL dd, y")}</> : format(dateRange.from, "LLL dd, y")) : <span>{t('select_date') || "Select Date Range"}</span>}</span>
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-auto p-0 rounded-2xl border-zinc-200 shadow-xl" align="end">
@@ -241,16 +295,29 @@ export default function Sales() {
                   </PopoverContent>
                 </Popover>
               </div>
-              <div className="w-full sm:w-auto">
+              
+              <div className="flex gap-2 w-full sm:w-auto">
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-full sm:w-[150px] h-10 border-zinc-200 bg-white text-zinc-800 font-bold text-xs shadow-sm rounded-xl outline-none focus:ring-1 focus:ring-zinc-900">
-                    <Filter className="w-3.5 h-3.5 mr-1.5 text-zinc-400"/><SelectValue placeholder="Status" />
+                  <SelectTrigger className="flex-1 sm:w-[140px] h-11 border-zinc-200/80 bg-white text-zinc-800 font-medium text-sm shadow-sm rounded-xl outline-none focus:ring-1 focus:ring-zinc-900">
+                    <Filter className="w-4 h-4 mr-1.5 text-zinc-400"/><SelectValue placeholder="Status" />
                   </SelectTrigger>
                   <SelectContent className="rounded-xl border-zinc-200 shadow-lg">
-                    <SelectItem value="ALL" className="font-bold text-xs">All Records</SelectItem>
-                    <SelectItem value="PAID" className="font-bold text-xs">Paid in Full</SelectItem>
-                    <SelectItem value="PARTIAL" className="font-bold text-xs">Advances</SelectItem>
-                    <SelectItem value="PENDING" className="font-bold text-xs">Unpaid Due</SelectItem>
+                    <SelectItem value="ALL" className="font-medium text-sm">{t('all_records') || "All Status"}</SelectItem>
+                    <SelectItem value="PAID" className="font-medium text-sm">{t('paid_in_full') || "Paid"}</SelectItem>
+                    <SelectItem value="PARTIAL" className="font-medium text-sm">{t('advances') || "Advances"}</SelectItem>
+                    <SelectItem value="PENDING" className="font-medium text-sm">{t('unpaid_due') || "Unpaid Due"}</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                <Select value={sourceFilter} onValueChange={setSourceFilter}>
+                  <SelectTrigger className="flex-1 sm:w-[140px] h-11 border-zinc-200/80 bg-white text-zinc-800 font-medium text-sm shadow-sm rounded-xl outline-none focus:ring-1 focus:ring-zinc-900">
+                    <SelectValue placeholder="Type" />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl border-zinc-200 shadow-lg">
+                    <SelectItem value="ALL" className="font-medium text-sm">{t('all_types') || "All Types"}</SelectItem>
+                    <SelectItem value="WALK_IN" className="font-medium text-sm">{t('walk_in') || "Walk-In"}</SelectItem>
+                    <SelectItem value="ONLINE" className="font-medium text-sm">{t('online') || "Online"}</SelectItem>
+                    <SelectItem value="MONTHLY" className="font-medium text-sm">{t('monthly') || "Monthly"}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -258,115 +325,129 @@ export default function Sales() {
           </div>
 
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-            <Card className="shadow-sm border border-zinc-200 bg-white rounded-2xl hover:shadow-md transition-shadow">
+            <Card className="shadow-sm border border-zinc-200/80 bg-white rounded-2xl hover:shadow-md transition-shadow">
               <CardContent className="p-4 flex flex-col justify-between h-full">
-                <div className="flex justify-between items-center mb-3"><span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Gross Revenue</span><ArrowUpRight className="h-4 w-4 text-zinc-400" /></div>
-                <div className="text-2xl sm:text-3xl font-bold tracking-tight text-zinc-900">{formatCurrency(stats.grossRevenue)}</div>
+                <div className="flex justify-between items-center mb-3"><span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">{t('gross_revenue') || "Gross Revenue"}</span><ArrowUpRight className="h-4 w-4 text-zinc-400" /></div>
+                <div className="text-2xl sm:text-3xl font-semibold tracking-tight text-zinc-900">{formatCurrency(stats.grossRevenue)}</div>
               </CardContent>
             </Card>
-            <Card className="shadow-sm border border-emerald-100 bg-emerald-50/50 rounded-2xl hover:shadow-md transition-shadow">
+            <Card className="shadow-sm border border-emerald-200/60 bg-emerald-50/50 rounded-2xl hover:shadow-md transition-shadow">
               <CardContent className="p-4 flex flex-col justify-between h-full">
-                <div className="flex justify-between items-center mb-3"><span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Collected</span><span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" /></div>
-                <div className="text-2xl sm:text-3xl font-bold tracking-tight text-emerald-900">{formatCurrency(stats.totalCollected)}</div>
-                <div className="flex items-center gap-3 text-[10px] font-bold text-emerald-700/80 mt-2"><span>Cash: {formatCurrency(stats.cashCollected)}</span><span>Digi: {formatCurrency(stats.onlineCollected)}</span></div>
+                <div className="flex justify-between items-center mb-3"><span className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wider">{t('collected') || "Collected"}</span><span className="flex h-2 w-2 rounded-full bg-emerald-500 shadow-sm" /></div>
+                <div className="text-2xl sm:text-3xl font-semibold tracking-tight text-emerald-900">{formatCurrency(stats.totalCollected)}</div>
+                <div className="flex items-center gap-3 text-[11px] font-medium text-emerald-700 mt-2"><span>Cash: {formatCurrency(stats.cashCollected)}</span><span>Digi: {formatCurrency(stats.onlineCollected)}</span></div>
               </CardContent>
             </Card>
-            <Card className="shadow-sm border border-zinc-200 bg-white rounded-2xl sm:col-span-2 hover:shadow-md transition-shadow">
+            <Card className="shadow-sm border border-zinc-200/80 bg-white rounded-2xl sm:col-span-2 hover:shadow-md transition-shadow">
               <CardContent className="p-4 flex flex-col justify-between h-full">
-                <div className="flex justify-between items-center mb-3"><span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Pending / Due</span><span className="flex h-2.5 w-2.5 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]" /></div>
-                <div className="flex justify-between items-baseline mt-auto"><div className="text-2xl sm:text-3xl font-bold tracking-tight text-zinc-900">{formatCurrency(stats.pendingUdhaar)}</div><div className="text-[11px] font-semibold text-zinc-400 hidden sm:block">Unpaid balances</div></div>
+                <div className="flex justify-between items-center mb-3"><span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">{t('pending_due') || "Pending / Due"}</span><span className="flex h-2 w-2 rounded-full bg-amber-500 shadow-sm" /></div>
+                <div className="flex justify-between items-baseline mt-auto">
+                  <div className="text-2xl sm:text-3xl font-semibold tracking-tight text-zinc-900">{formatCurrency(stats.pendingUdhaar)}</div>
+                  <div className="text-[11px] font-medium text-zinc-400 hidden sm:block">{t('unpaid_balances') || "Unpaid balances"}</div>
+                </div>
               </CardContent>
             </Card>
           </div>
 
-          <div className="bg-white border border-zinc-200 shadow-sm rounded-3xl overflow-hidden">
-            <div className="px-5 py-4 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50">
-               <div className="flex items-center gap-2"><h2 className="text-sm font-bold text-zinc-900">Transaction Ledger</h2><span className="px-2 py-0.5 text-[10px] font-bold bg-white border border-zinc-200 text-zinc-500 rounded-md shadow-sm">{filteredOrders.length}</span></div>
+          <div className="bg-white border border-zinc-200/80 shadow-sm rounded-[24px] overflow-hidden">
+            <div className="px-5 py-4 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/80 backdrop-blur-md">
+               <div className="flex items-center gap-2">
+                 <h2 className="text-sm font-semibold text-zinc-900">{t('transaction_ledger') || "Transaction Ledger"}</h2>
+                 <span className="px-2.5 py-1 text-[10px] font-medium bg-white border border-zinc-200 text-zinc-600 rounded-md shadow-sm">{filteredOrders.length}</span>
+               </div>
             </div>
 
             {loading ? (
-               <div className="text-center py-20 text-zinc-400 font-semibold text-sm flex flex-col items-center gap-3"><div className="animate-spin rounded-full h-5 w-5 border-2 border-zinc-900 border-t-transparent" /><span>Loading ledger...</span></div>
-            ) : filteredOrders.length === 0 ? (
-               <div className="text-center py-24 flex flex-col items-center px-4"><div className="h-12 w-12 rounded-2xl bg-zinc-50 border border-zinc-200 flex items-center justify-center mb-4 text-zinc-400"><ShoppingBag className="h-5 w-5" /></div><p className="text-zinc-900 font-bold text-base">No transactions found</p></div>
+               <div className="text-center py-20 text-zinc-500 font-medium text-sm flex flex-col items-center gap-3"><div className="animate-spin rounded-full h-5 w-5 border-2 border-zinc-300 border-t-zinc-600" /><span>{t('loading_ledger') || "Loading ledger..."}</span></div>
+            ) : paginatedOrders.length === 0 ? (
+               <div className="text-center py-24 flex flex-col items-center px-4"><div className="h-12 w-12 rounded-2xl bg-zinc-50 border border-zinc-200 flex items-center justify-center mb-4 text-zinc-400"><ShoppingBag className="h-5 w-5" /></div><p className="text-zinc-900 font-medium text-base">{t('no_transactions') || "No transactions found"}</p></div>
             ) : (
               <div className="flex flex-col divide-y divide-zinc-100">
-                {filteredOrders.map((order) => {
+                {paginatedOrders.map((order) => {
                   const isReturn = order.total_amount < 0;
                   const isExpanded = expandedRowId === order.id;
+                  const hasDue = order.balance_due > 0;
 
                   return (
                     <div key={order.id} className="flex flex-col bg-white hover:bg-zinc-50/50 transition-colors">
-                      {/* COMPACT RECORD LINE */}
                       <div className="flex flex-col md:flex-row md:items-center justify-between p-3 sm:p-4 gap-3">
                         
                         <div className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer" onClick={() => setExpandedRowId(isExpanded ? null : order.id)}>
-                          <div className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 border ${isReturn ? 'bg-rose-50 border-rose-200 text-rose-600' : 'bg-white border-zinc-200 text-zinc-700 shadow-sm'}`}>
-                            {isReturn ? <ArrowDownLeft className="h-4 w-4" /> : <ShoppingBag className="h-4 w-4" />}
+                          <div className={`h-11 w-11 rounded-xl flex items-center justify-center shrink-0 border ${isReturn ? 'bg-rose-50 border-rose-200 text-rose-600' : 'bg-zinc-50 border-zinc-200 text-zinc-600 shadow-sm'}`}>
+                            {isReturn ? <ArrowDownLeft className="h-5 w-5" /> : <ShoppingBag className="h-5 w-5" />}
                           </div>
                           <div className="min-w-0">
-                            <div className="text-sm font-bold text-zinc-900 truncate">{order.customers?.full_name || "Walk-in Customer"}</div>
-                            <div className="text-[11px] font-semibold text-zinc-500 flex items-center gap-1.5 mt-0.5">
+                            <div className="text-sm font-semibold text-zinc-900 truncate">
+                              {order.customers?.full_name || (t('walk_in_customer') || "Walk-in Customer")}
+                              {order.source && <span className="ml-2 px-1.5 py-0.5 text-[9px] bg-zinc-100 text-zinc-500 rounded border border-zinc-200 uppercase">{order.source.replace('_', ' ')}</span>}
+                            </div>
+                            <div className="text-[11px] font-medium text-zinc-500 flex items-center gap-1.5 mt-0.5">
                               <span className="font-mono text-zinc-400">{order.order_number}</span><span>•</span><span>{format(new Date(order.created_at), "MMM d, h:mm a")}</span>
                             </div>
                           </div>
                         </div>
 
-                        <div className="flex items-center justify-between md:justify-end gap-4 shrink-0 pl-12 md:pl-0">
+                        <div className="flex items-center justify-between md:justify-end gap-3 sm:gap-4 shrink-0 pl-14 md:pl-0">
                           <div className="flex flex-col items-start md:items-end min-w-[80px]">
-                             <span className={`text-sm sm:text-base font-bold ${isReturn ? 'text-rose-600' : 'text-zinc-900'}`}>{formatCurrency(order.total_amount)}</span>
-                             {order.payment_status === 'PENDING' ? <span className="text-[9px] font-bold text-amber-600 uppercase">Unpaid Due</span> : order.payment_status === 'PARTIAL' ? <span className="text-[9px] font-bold text-blue-600 uppercase">Advance</span> : <span className="text-[9px] font-bold text-emerald-600 uppercase">Paid</span>}
+                             <span className={`text-sm sm:text-base font-semibold ${isReturn ? 'text-rose-600' : 'text-zinc-900'}`}>{formatCurrency(order.total_amount)}</span>
+                             {order.payment_status === 'PENDING' ? <span className="text-[10px] font-semibold text-amber-600 uppercase mt-0.5">{t('unpaid_due') || "Unpaid Due"}</span> : order.payment_status === 'PARTIAL' ? <span className="text-[10px] font-semibold text-indigo-600 uppercase mt-0.5">{t('advance') || "Advance"}</span> : <span className="text-[10px] font-semibold text-emerald-600 uppercase mt-0.5">{t('paid') || "Paid"}</span>}
                           </div>
                           
-                          {/* INLINE ACTION BAR */}
                           <div className="flex items-center gap-1 bg-white border border-zinc-200 p-1 rounded-xl shadow-sm">
-                            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900" onClick={(e) => { e.stopPropagation(); setPreviewOrder(order); }}>
+                            
+                            {hasDue && order.customers?.phone_number && (
+                               <Button variant="ghost" size="sm" className="h-8 px-2.5 rounded-lg text-amber-700 bg-amber-50 hover:bg-amber-100 hover:text-amber-800 font-semibold text-[10px] uppercase tracking-wide mr-1" onClick={(e) => { e.stopPropagation(); navigate(`/udhaar?search=${order.customers?.phone_number}`); }}>
+                                 <CreditCard className="h-3.5 w-3.5 mr-1" /> Pay Due
+                               </Button>
+                            )}
+
+                            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 transition-colors" onClick={(e) => { e.stopPropagation(); setPreviewOrder(order); }}>
                               <Eye className="h-4 w-4" />
                             </Button>
-                            <Button variant="ghost" size="icon" disabled={!order.customers?.phone_number} className="h-8 w-8 rounded-lg text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700" onClick={(e) => { e.stopPropagation(); shareOnWhatsApp(order); }}>
+                            <Button variant="ghost" size="icon" disabled={!order.customers?.phone_number} className="h-8 w-8 rounded-lg text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700 transition-colors" onClick={(e) => { e.stopPropagation(); shareOnWhatsApp(order); }}>
                               <MessageCircle className="h-4 w-4" />
                             </Button>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-zinc-400 hover:bg-rose-50 hover:text-rose-600" onClick={(e) => { e.stopPropagation(); setVoidingOrder(order); }}>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-zinc-400 hover:bg-rose-50 hover:text-rose-600 transition-colors" onClick={(e) => { e.stopPropagation(); setVoidingOrder(order); }}>
                               <Trash2 className="h-4 w-4" />
                             </Button>
                             <div className="w-px h-4 bg-zinc-200 mx-1"></div>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-zinc-400 hover:bg-zinc-100" onClick={() => setExpandedRowId(isExpanded ? null : order.id)}>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-zinc-400 hover:bg-zinc-100 transition-colors" onClick={() => setExpandedRowId(isExpanded ? null : order.id)}>
                               {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                             </Button>
                           </div>
                         </div>
                       </div>
 
-                      {/* COMPACT BREAKDOWN */}
                       {isExpanded && (
-                        <div className="bg-zinc-50 border-t border-zinc-100 p-4 shadow-inner grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="bg-zinc-50/80 border-t border-zinc-100 p-4 shadow-inner grid grid-cols-1 md:grid-cols-2 gap-5">
                            <div className="space-y-2">
-                             <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Order Items</p>
+                             <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">{t('order_items') || "Order Items"}</p>
                              {order.order_items.map((bi, idx) => {
                                const itemObj = getItemObj(bi.items);
                                return (
-                               <div key={idx} className="flex justify-between items-start text-xs bg-white p-2.5 rounded-lg border border-zinc-200 shadow-sm">
+                               <div key={idx} className="flex justify-between items-start text-xs bg-white p-3 rounded-xl border border-zinc-200 shadow-sm">
                                  <div className="flex items-start gap-2 min-w-0 pr-2">
-                                   <span className="font-bold text-zinc-400 text-xs shrink-0">{Math.abs(bi.quantity)}×</span>
-                                   <span className="font-bold text-zinc-800 leading-tight">{itemObj?.item_name || "Unknown"}</span>
+                                   <span className="font-semibold text-zinc-400 text-xs shrink-0">{Math.abs(bi.quantity)}×</span>
+                                   <span className="font-semibold text-zinc-800 leading-tight">{itemObj?.item_name || "Unknown"}</span>
                                  </div>
-                                 <span className="font-bold text-zinc-900 shrink-0">₹{Math.abs(bi.quantity * bi.price_at_order)}</span>
+                                 <span className="font-semibold text-zinc-900 shrink-0">₹{Math.abs(bi.quantity * bi.price_at_order)}</span>
                                </div>
                              );})}
                            </div>
                            <div className="space-y-2">
-                             <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Payment Breakdown</p>
+                             <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">{t('payment_breakdown') || "Payment Breakdown"}</p>
                              {order.payments && order.payments.length > 0 ? order.payments.map((p, i) => (
-                               <div key={i} className="flex justify-between items-center text-xs bg-white p-2.5 rounded-lg border border-zinc-200 shadow-sm">
-                                 <span className="font-bold text-zinc-700">{p.payment_method}</span>
-                                 <span className="font-bold text-emerald-600">{formatCurrency(p.amount)}</span>
+                               <div key={i} className="flex justify-between items-center text-xs bg-white p-3 rounded-xl border border-zinc-200 shadow-sm">
+                                 <span className="font-semibold text-zinc-700">{p.payment_method}</span>
+                                 <span className="font-semibold text-emerald-600">{formatCurrency(p.amount)}</span>
                                </div>
                              )) : (
-                               <div className="text-xs font-semibold text-zinc-400 italic bg-white p-2.5 rounded-lg border border-zinc-200 shadow-sm">No payments recorded.</div>
+                               <div className="text-xs font-medium text-zinc-500 italic bg-white p-3 rounded-xl border border-zinc-200 shadow-sm">{t('no_payments_recorded') || "No payments recorded."}</div>
                              )}
                              {order.balance_due > 0 && (
-                               <div className="flex justify-between items-center text-xs bg-rose-50 border border-rose-100 p-2.5 rounded-lg">
-                                 <span className="font-bold text-rose-700">Pending Balance</span>
-                                 <span className="font-bold text-rose-700">{formatCurrency(order.balance_due)}</span>
+                               <div className="flex justify-between items-center text-xs bg-amber-50 border border-amber-200 p-3 rounded-xl shadow-sm mt-2">
+                                 <span className="font-semibold text-amber-700">{t('pending_balance') || "Pending Balance"}</span>
+                                 <span className="font-semibold text-amber-700">{formatCurrency(order.balance_due)}</span>
                                </div>
                              )}
                            </div>
@@ -377,23 +458,52 @@ export default function Sales() {
                 })}
               </div>
             )}
+            
+            {/* Pagination Controls */}
+            {!loading && totalPages > 1 && (
+              <div className="flex items-center justify-between px-5 py-4 border-t border-zinc-200/80 bg-zinc-50">
+                <span className="text-xs font-medium text-zinc-500">
+                  Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1} to {Math.min(currentPage * ITEMS_PER_PAGE, filteredOrders.length)} of {filteredOrders.length} entries
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))} 
+                    disabled={currentPage === 1}
+                    className="h-8 rounded-lg border-zinc-300 text-xs font-medium"
+                  >
+                    Previous
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} 
+                    disabled={currentPage === totalPages}
+                    className="h-8 rounded-lg border-zinc-300 text-xs font-medium"
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            )}
+            
           </div>
         </div>
       </div>
 
       {/* --- CENTRAL BILLING FORMAT PREVIEW MODAL --- */}
       <Dialog open={!!previewOrder} onOpenChange={(open) => !open && setPreviewOrder(null)}>
-        <DialogContent aria-describedby={undefined} className="sm:max-w-md w-[95vw] rounded-[32px] p-0 overflow-hidden bg-zinc-100 shadow-2xl border-zinc-200 flex flex-col max-h-[90dvh]">
+        <DialogContent aria-describedby={undefined} className="sm:max-w-md w-[95vw] rounded-2xl p-0 overflow-hidden bg-zinc-100 shadow-2xl border-zinc-200 flex flex-col max-h-[90dvh]">
           <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-4 bg-white shrink-0 shadow-sm z-10">
             <div>
-              <DialogTitle className="text-base font-bold text-zinc-900">Receipt Preview</DialogTitle>
-              <p className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider mt-0.5">{previewOrder?.order_number}</p>
+              <DialogTitle className="text-base font-semibold text-zinc-900">{t('receipt_preview') || "Receipt Preview"}</DialogTitle>
+              <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mt-0.5">{previewOrder?.order_number}</p>
             </div>
-            <button onClick={() => setPreviewOrder(null)} className="p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-full transition-colors active:scale-95"><X className="h-5 w-5" /></button>
+            <button onClick={() => setPreviewOrder(null)} className="p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-colors active:scale-95"><X className="h-5 w-5" /></button>
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 flex justify-center">
-            {/* Visually replicating the physical receipt on screen using properly normalized calculations */}
             <div className="bg-white w-[148mm] shadow-md border border-zinc-200 min-h-[200px] p-[15px] font-sans text-sm text-black">
                <img src="/jmm-bill-header.png" alt="JMM Spices" className="w-full object-contain mb-[15px] border-b-[3px] border-[#880000]" />
                <div className="flex justify-between font-bold text-[15px] mb-[10px] px-[5px]">
@@ -472,8 +582,8 @@ export default function Sales() {
           </div>
           
           <div className="p-4 sm:p-5 border-t border-zinc-200 bg-white shrink-0 pb-safe">
-            <Button onClick={() => setTimeout(() => window.print(), 100)} className="h-14 w-full rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-[16px] font-bold text-white shadow-sm active:scale-[0.98] transition-transform">
-              <Printer className="h-5 w-5 mr-2" /> Print Physical Receipt
+            <Button onClick={() => setTimeout(() => window.print(), 100)} className="h-12 w-full rounded-xl bg-zinc-900 hover:bg-zinc-800 text-[15px] font-semibold text-white shadow-sm active:scale-[0.98] transition-transform">
+              <Printer className="h-5 w-5 mr-2" /> {t('print_physical_receipt') || "Print Physical Receipt"}
             </Button>
           </div>
         </DialogContent>
@@ -483,20 +593,20 @@ export default function Sales() {
 
       {/* VOID BILL CONFIRMATION MODAL */}
       <AlertDialog open={!!voidingOrder} onOpenChange={(open) => !open && setVoidingOrder(null)}>
-        <AlertDialogContent aria-describedby={undefined} className="rounded-[24px] border-zinc-200 shadow-2xl p-0 overflow-hidden sm:max-w-sm">
+        <AlertDialogContent aria-describedby={undefined} className="rounded-2xl border-zinc-200 shadow-2xl p-0 overflow-hidden sm:max-w-sm">
           <div className="p-6 bg-white">
-            <div className="w-12 h-12 rounded-full bg-rose-50 border border-rose-100 flex items-center justify-center mb-4 shadow-inner">
-              <Trash2 className="h-5 w-5 text-rose-500" />
+            <div className="w-12 h-12 rounded-xl bg-rose-50 border border-rose-100 flex items-center justify-center mb-4 shadow-sm">
+              <Trash2 className="h-5 w-5 text-rose-600" />
             </div>
-            <AlertDialogTitle className="text-lg font-bold text-zinc-900 mb-1">Void Bill Completely?</AlertDialogTitle>
-            <AlertDialogDescription className="font-semibold text-zinc-500 text-sm mt-2">
-              This will permanently delete Order <span className="font-bold text-zinc-800">{voidingOrder?.order_number}</span> from the ledger and reverse the transaction metrics. This cannot be undone.
+            <AlertDialogTitle className="text-lg font-semibold text-zinc-900 mb-1">{t('void_bill_completely') || "Void Bill Completely?"}</AlertDialogTitle>
+            <AlertDialogDescription className="font-medium text-zinc-500 text-sm mt-2">
+              {t('void_bill_desc') || "This will permanently delete Order"} <span className="font-semibold text-zinc-900">{voidingOrder?.order_number}</span> {t('from_ledger_desc') || "from the ledger and reverse the transaction metrics. This cannot be undone."}
             </AlertDialogDescription>
           </div>
           <div className="p-4 bg-zinc-50 border-t border-zinc-100 flex flex-col sm:flex-row gap-3">
-            <AlertDialogCancel className="h-12 rounded-xl font-bold border-zinc-200 text-zinc-700 w-full mt-0 bg-white shadow-sm hover:bg-zinc-100">Keep Bill</AlertDialogCancel>
-            <Button onClick={handleVoidOrder} className="h-12 rounded-xl font-bold bg-rose-600 hover:bg-rose-700 text-white w-full shadow-sm active:scale-95 transition-transform">
-              Yes, Void Bill
+            <AlertDialogCancel className="h-11 rounded-xl font-semibold border-zinc-200 text-zinc-700 w-full mt-0 bg-white shadow-sm hover:bg-zinc-50">{t('keep_bill') || "Keep Bill"}</AlertDialogCancel>
+            <Button onClick={handleVoidOrder} className="h-11 rounded-xl font-semibold bg-rose-600 hover:bg-rose-700 text-white w-full shadow-sm active:scale-[0.98] transition-all">
+              {t('yes_void_bill') || "Yes, Void Bill"}
             </Button>
           </div>
         </AlertDialogContent>

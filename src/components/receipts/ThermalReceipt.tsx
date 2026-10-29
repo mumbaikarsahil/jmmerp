@@ -132,21 +132,20 @@ export const ThermalReceipt = ({
             size: ${printerSize === "110mm" ? "106mm 297mm" : "78mm 297mm"}; 
           }
           
-          @media print {
-            html, body, #root { 
+         @media print {
+            /* 1. AGGRESSIVELY HIDE THE ENTIRE APP UI AND ANY OPEN MODALS */
+            #root, [data-radix-portal] { 
+              display: none !important; 
+            }
+            
+            /* 2. FORCE BACKGROUND TO WHITE */
+            html, body { 
               background: #ffffff !important; 
-              color: #000000 !important;
-              height: auto !important; 
-              min-height: 0 !important; 
-              overflow: visible !important; 
               margin: 0 !important; 
               padding: 0 !important; 
               -webkit-print-color-adjust: exact !important; 
               print-color-adjust: exact !important; 
             }
-
-            header, nav, footer, aside, .sidebar, button, [data-radix-portal], [role="dialog"] { display: none !important; }
-            body * { visibility: hidden; }
 
             .thermal-print-section {
               position: absolute !important;

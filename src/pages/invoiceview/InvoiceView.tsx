@@ -39,7 +39,7 @@ export default function InvoiceView() {
       if (orderError) throw orderError;
       if (!orderData) throw new Error("Order not found");
 
-      const currentOrder = orderData as any; // Bypasses the 'never' type restriction
+      const currentOrder = orderData as any;
 
       // 2. Fetch Order Items & Custom Ingredients (Mix Masala support)
       const { data: itemsData, error: itemsError } = await (supabase as any)
@@ -102,16 +102,18 @@ export default function InvoiceView() {
 
   const totalLabourCharge = labourItems.reduce((sum, item) => sum + safeNumber(item.price_at_order), 0);
   const totalMaterialCost = physicalItems.reduce((sum, item) => sum + safeNumber(item.price_at_order), 0);
+  const deliveryCharge = safeNumber(order.delivery_charge);
 
   // Store details (With JMM Defaults if missing)
   const businessName = order.tenants?.tenant_name || "जय महाराष्ट्र मसाले (JMM)";
-  const tenantLogo = order.tenants?.tenant_logo || "/logo.png";
+  const tenantLogo = order.tenants?.tenant_logo || "/jmmlogo.png"; // Fallback to your local logo
   const tenantAddress = order.tenants?.tenant_address || "दुकान नं. 3, बाबला मस्जिद शेजारी, डिलाई रोड, ना. म. जोशी मार्ग, करीरोड, मुंबई - 400013.";
   const tenantPhone = order.tenants?.tenant_phone ? String(order.tenants.tenant_phone) : "98679 87460 / 98679 95629";
 
   // Customer details
   const customerName = order.customers?.full_name || "Walk-in Customer";
   const customerPhone = order.customers?.phone_number || "";
+  const customerAddress = order.customer_address || "";
 
   const handlePrint = () => {
     window.print();
@@ -139,7 +141,7 @@ export default function InvoiceView() {
             className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-md transition-transform active:scale-95"
           >
             <Printer size={18} />
-            Print Bill
+            Download Bill
           </button>
         </div>
 
@@ -151,7 +153,11 @@ export default function InvoiceView() {
 
           <div className="p-4 sm:p-8">
             {/* HEADER SECTION */}
-            <div className="text-center mb-6">
+            <div className="text-center mb-6 flex flex-col items-center">
+              {tenantLogo && (
+                <img src={tenantLogo} alt="Business Logo" className="h-20 w-auto object-contain mb-3 print-exact" />
+              )}
+              
               <h2 className="text-xs sm:text-sm font-bold text-zinc-700 mb-1">
                 आम्ही सर्व प्रकारचे मसाले ऑर्डर प्रमाणे भाजून व कुटून देतो.
               </h2>
@@ -184,6 +190,13 @@ export default function InvoiceView() {
                 {new Date(order.created_at).toLocaleDateString("en-IN")}
               </div>
             </div>
+
+            {customerAddress && (
+              <div className="border-2 border-black border-t-0 -mt-[26px] mb-6 p-2 text-sm font-bold text-black flex print-exact">
+                <span className="bg-zinc-100 border-r-2 border-black px-2 mr-2 py-1 -my-2 -ml-2 flex items-center justify-center whitespace-nowrap">पत्ता (Address):</span>
+                <span>{customerAddress}</span>
+              </div>
+            )}
 
             {/* MAIN ITEMS TABLE */}
             <table className="w-full border-collapse border-2 border-black text-sm font-bold text-black mb-6 print-exact">
@@ -241,6 +254,13 @@ export default function InvoiceView() {
                     <tr className="border-b border-black">
                       <td className="border-r-2 border-black px-3 py-2 text-right">कुटणावळ मजुरी (Labour/Grinding)</td>
                       <td className="px-3 py-2 text-right">{totalLabourCharge.toFixed(0)}</td>
+                    </tr>
+                  )}
+
+                  {deliveryCharge > 0 && (
+                    <tr className="border-b border-black">
+                      <td className="border-r-2 border-black px-3 py-2 text-right">डिलीव्हरी फी (Delivery Fee)</td>
+                      <td className="px-3 py-2 text-right">{deliveryCharge.toFixed(0)}</td>
                     </tr>
                   )}
 

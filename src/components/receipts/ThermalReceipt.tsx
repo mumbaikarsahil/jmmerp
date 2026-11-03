@@ -58,11 +58,12 @@ export const ThermalReceipt = ({
 
   const customerName = order.customerName || order.customers?.full_name || "Walk-in Customer";
   const customerPhone = order.customerPhone || order.customers?.phone_number || "";
-  const customerAddress = order.customerAddress || order.customers?.address || "";
+  const customerAddress = order.customerAddress || order.customers?.address || order.customer_address || "";
   const dateStr = new Date(order.created_at || Date.now()).toLocaleDateString('en-IN');
   const totalAmount = Math.floor(order.final_amount || order.total_amount || 0);
   const advancePaid = Math.floor(order.advancePaid || order.amount_paid || 0);
   const balanceDue = Math.floor(order.balanceDue || order.balance_due || 0);
+  const deliveryCharge = Math.floor(order.deliveryCharge || order.delivery_charge || 0);
   const totalMixWeightKg = order.totalMixWeightKg || 0;
 
   const orderMode = order.source || "WALK_IN";
@@ -231,9 +232,9 @@ export const ThermalReceipt = ({
           .cf-icon { width: 16px; height: 16px; fill: black; }
           .cf-icon-outline { width: 16px; height: 16px; fill: none; stroke: black; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
-          .qr-section { margin-top: 20px; text-align: center; border-top: 1px dashed black; padding-top: 15px; page-break-inside: avoid !important; }
-          .qr-image { width: 140px; height: 140px; margin: 0 auto; object-fit: contain; filter: grayscale(100%) contrast(1.2); }
-          .qr-text { font-size: 15px; font-weight: 900; margin-top: 5px; text-transform: uppercase; letter-spacing: 1px; }
+          .qr-section { margin-top: 24px; text-align: center; border-top: 1px dashed black; padding-top: 20px; padding-bottom: 10px; page-break-inside: avoid !important; }
+          .qr-image { width: 220px; height: 220px; margin: 0 auto; object-fit: contain; filter: grayscale(100%) contrast(1.2); }
+          .qr-text { font-size: 18px; font-weight: 900; margin-top: 8px; text-transform: uppercase; letter-spacing: 1px; }
         `}
       </style>
       
@@ -288,7 +289,11 @@ export const ThermalReceipt = ({
 
         <div className="customer-info">
           <div>नाव: {customerName} {customerPhone ? `(${customerPhone})` : ''}</div>
-          {customerAddress && <div>पत्ता: {customerAddress}</div>}
+          {customerAddress && (
+            <div style={{ marginTop: '4px', paddingTop: '4px', borderTop: '1px dotted #ccc' }}>
+              पत्ता (Del): {customerAddress}
+            </div>
+          )}
         </div>
 
         <table>
@@ -325,6 +330,15 @@ export const ThermalReceipt = ({
                 <td className="td-paise">00</td>
               </tr>
             ))}
+
+            {/* DELIVERY FEE LINE */}
+            {deliveryCharge > 0 && (
+              <tr className="totals-row">
+                <td className="td-item" colSpan={2}>Delivery Fee</td>
+                <td className="td-rs">{deliveryCharge}</td>
+                <td className="td-paise">00</td>
+              </tr>
+            )}
             
             <tr className="totals-row">
               <td className="td-item" colSpan={2}>एकूण रुपये</td>
@@ -399,7 +413,7 @@ export const ThermalReceipt = ({
           {/* UPI QR CODE FOR ACTUAL BILLS */}
           {!isDemoEstimate && balanceDue > 0 && (
             <div className="qr-section">
-              <img src="/upi-qr.png" alt="Scan to Pay via UPI" className="qr-image" />
+              <img src="/paymentqr.jpg" alt="Scan to Pay via UPI" className="qr-image" />
               <div className="qr-text">Scan to Pay via UPI</div>
             </div>
           )}

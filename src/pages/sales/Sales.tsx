@@ -28,6 +28,7 @@ type OrderWithDetails = {
   payment_status: 'PAID' | 'PENDING' | 'PARTIAL';
   status: string;
   source: string;
+  delivery_charge?: number;
   customers?: { full_name: string | null; phone_number: string | null } | null;
   order_items: {
     id: string;
@@ -139,7 +140,7 @@ export default function Sales() {
         const { data, error } = await (supabase as any)
           .from('orders')
           .select(`
-            id, order_number, created_at, total_amount, payment_status, status, source,
+            id, order_number, created_at, total_amount, payment_status, status, source, delivery_charge,
             customers ( full_name, phone_number ),
             order_items ( id, quantity, price_at_order, items ( item_name, base_unit, item_type, selling_price ) ),
             payments ( amount, payment_method )
@@ -444,10 +445,18 @@ export default function Sales() {
                              )) : (
                                <div className="text-xs font-medium text-zinc-500 italic bg-white p-3 rounded-xl border border-zinc-200 shadow-sm">{t('no_payments_recorded') || "No payments recorded."}</div>
                              )}
+                             
+                             {order.delivery_charge && order.delivery_charge > 0 ? (
+                               <div className="flex justify-between items-center text-xs bg-white p-3 rounded-xl border border-zinc-200 shadow-sm mt-2">
+                                 <span className="font-semibold text-amber-700">Delivery Fee</span>
+                                 <span className="font-semibold text-amber-700">{formatCurrency(order.delivery_charge)}</span>
+                               </div>
+                             ) : null}
+
                              {order.balance_due > 0 && (
-                               <div className="flex justify-between items-center text-xs bg-amber-50 border border-amber-200 p-3 rounded-xl shadow-sm mt-2">
-                                 <span className="font-semibold text-amber-700">{t('pending_balance') || "Pending Balance"}</span>
-                                 <span className="font-semibold text-amber-700">{formatCurrency(order.balance_due)}</span>
+                               <div className="flex justify-between items-center text-xs bg-rose-50 border border-rose-200 p-3 rounded-xl shadow-sm mt-2">
+                                 <span className="font-semibold text-rose-700">{t('pending_balance') || "Pending Balance"}</span>
+                                 <span className="font-semibold text-rose-700">{formatCurrency(order.balance_due)}</span>
                                </div>
                              )}
                            </div>
@@ -555,12 +564,24 @@ export default function Sales() {
                        );
                      });
                    })}
-                   <tr className="border-t-[2px] border-black font-black bg-[#f4f4f5]">
-                     <td className="border border-black p-1.5">एकूण वजन</td>
-                     <td className="border border-black p-1.5 text-center border-x-[2px]">{previewOrder?.totalMixWeightKg ? `${previewOrder.totalMixWeightKg.toFixed(3)} kg` : '-'}</td>
-                     <td className="border border-black p-1.5 bg-[#f4f4f5]"></td>
-                     <td className="border border-black p-1.5 border-l-[2px] bg-[#f4f4f5]"></td>
-                   </tr>
+                   
+                   {previewOrder?.totalMixWeightKg ? (
+                     <tr className="border-t-[2px] border-black font-black bg-[#f4f4f5]">
+                       <td className="border border-black p-1.5">एकूण वजन</td>
+                       <td className="border border-black p-1.5 text-center border-x-[2px]">{`${previewOrder.totalMixWeightKg.toFixed(3)} kg`}</td>
+                       <td className="border border-black p-1.5 bg-[#f4f4f5]"></td>
+                       <td className="border border-black p-1.5 border-l-[2px] bg-[#f4f4f5]"></td>
+                     </tr>
+                   ) : null}
+
+                   {previewOrder?.delivery_charge && previewOrder.delivery_charge > 0 ? (
+                      <tr className="border-t-[2px] border-black font-black bg-[#f4f4f5]">
+                        <td className="border border-black p-1.5" colSpan={2}>Delivery Fee</td>
+                        <td className="border border-black p-1.5 text-right text-lg">{previewOrder.delivery_charge}</td>
+                        <td className="border border-black p-1.5 text-center border-l-[2px]">00</td>
+                      </tr>
+                   ) : null}
+                   
                    <tr className="border-t-[2px] border-black font-black bg-[#f4f4f5]">
                      <td className="border border-black p-1.5" colSpan={2}>एकूण रुपये</td>
                      <td className="border border-black p-1.5 text-right text-lg">{Math.floor(previewOrder?.total_amount || 0)}</td>

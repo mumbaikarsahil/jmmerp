@@ -3,7 +3,7 @@ import { Html5Qrcode } from "html5-qrcode";
 import {
   Camera, Search, X, ShoppingCart, ScanLine, Minus, Plus, Trash2,
   UserRound, Phone, ChevronRight, Package, Scale, 
-  FlaskConical, CheckCircle2, Edit3, Receipt, Mic, ArrowLeft, ChevronDown, Printer, MessageCircle, Delete, NotebookPen, MapPin, Tag
+  FlaskConical, CheckCircle2, Edit3, Receipt, Mic, ArrowLeft, ChevronDown, Printer, MessageCircle, Delete, NotebookPen, MapPinHouse, Truck, Tag
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import type { Database } from "@/lib/supabase";
@@ -59,6 +59,7 @@ type Customer = {
   phone_number: string | null;
   customer_type: string | null;
   address?: string | null;
+  pincode?: string | null;
 };
 
 type MasalaTemplate = {
@@ -207,7 +208,11 @@ export default function Billing() {
   const [customerPhone, setCustomerPhone] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [customerAddress, setCustomerAddress] = useState("");
+  const [customerPincode, setCustomerPincode] = useState("");
   const [foundCustomer, setFoundCustomer] = useState<Customer | null>(null);
+
+  const [isDelivery, setIsDelivery] = useState(false);
+  const [deliveryCharge, setDeliveryCharge] = useState(0);
 
   const [selectedCategory, setSelectedCategory] = useState("ALL");
   const [searchTerm, setSearchTerm] = useState("");
@@ -255,7 +260,6 @@ export default function Billing() {
   const [discountInput, setDiscountInput] = useState<string>("");
 
   const [payments, setPayments] = useState<PaymentEntry[]>([]);
-  const [paymentAmountInput, setPaymentAmountInput] = useState("");
   const [paymentMethodInput, setPaymentMethodInput] = useState<PaymentMethod>("CASH");
 
   const [checkoutOpen, setCheckoutOpen] = useState(false); 
@@ -265,7 +269,6 @@ export default function Billing() {
   useEffect(() => {
     if (cart.length === 0 && checkoutOpen) {
       setCheckoutOpen(false);
-      setPaymentDialogOpen(false);
     }
   }, [cart.length, checkoutOpen]);
 
@@ -290,6 +293,39 @@ export default function Billing() {
   const [weightInputMode, setWeightInputMode] = useState<'quick'|'custom'>('quick');
 
   const [numpadConfig, setNumpadConfig] = useState<{isOpen: boolean, title: string, value: string, allowDecimal: boolean, onConfirm: (v: string)=>void}>({ isOpen: false, title: "", value: "", allowDecimal: true, onConfirm: ()=>{} });
+
+  // PHYSICAL KEYBOARD LISTENER FOR NUMPAD OVERLAY
+  useEffect(() => {
+    if (!numpadConfig.isOpen) return;
+    
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (['Enter', 'Backspace', 'Delete', ' '].includes(e.key) || (e.key >= '0' && e.key <= '9')) {
+        e.preventDefault();
+      }
+      
+      setNumpadConfig(prev => {
+        let newValue = prev.value;
+        if (e.key >= '0' && e.key <= '9') {
+          newValue = prev.value + e.key;
+        } else if (e.key === '.') {
+          if (prev.allowDecimal && !prev.value.includes('.')) {
+            newValue = prev.value + e.key;
+          }
+        } else if (e.key === 'Backspace' || e.key === 'Delete') {
+          newValue = prev.value.slice(0, -1);
+        } else if (e.key === 'Enter') {
+          setTimeout(() => prev.onConfirm(prev.value), 0); 
+          return { ...prev, isOpen: false };
+        } else if (e.key === 'Escape') {
+          return { ...prev, isOpen: false };
+        }
+        return { ...prev, value: newValue };
+      });
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [numpadConfig.isOpen]);
 
   const [printType, setPrintType] = useState<"LABEL" | "RECEIPT" | null>(null);
   const [printerSize, setPrinterSize] = useState<"80mm" | "110mm">("80mm");
@@ -328,17 +364,42 @@ export default function Billing() {
     return val;
   }, [subtotal, discountInput, discountType]);
 
-  const finalTotal = Math.max(0, subtotal - calculatedDiscount);
+  const finalTotal = Math.max(0, subtotal - calculatedDiscount + (isDelivery ? deliveryCharge : 0));
   const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
   const balanceDue = Math.max(0, finalTotal - totalPaid);
 
-  useEffect(() => {
-    if (balanceDue > 0 && payments.length === 0 && !paymentAmountInput) {
-      setPaymentAmountInput(String(balanceDue));
-    } else if (balanceDue === 0) {
-      setPaymentAmountInput("");
+  const calculateDeliveryCharge = async (pincode: string) => {
+    if (!pincode || !currentTenantId) {
+      setDeliveryCharge(99);
+      return;
     }
-  }, [balanceDue, checkoutOpen, paymentDialogOpen]);
+    try {
+      const { data } = await (supabase as any)
+        .from('delivery_zones')
+        .select('*')
+        .eq('tenant_id', currentTenantId)
+        .eq('pincode', pincode)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (data) {
+        if (data.free_delivery_above && subtotal >= data.free_delivery_above) {
+          setDeliveryCharge(0);
+        } else {
+          setDeliveryCharge(Number(data.delivery_fee) || 0);
+        }
+      } else {
+        setDeliveryCharge(99);
+      }
+    } catch (err) {
+      setDeliveryCharge(99);
+    }
+  };
+
+  useEffect(() => {
+    if (isDelivery) calculateDeliveryCharge(customerPincode);
+    else setDeliveryCharge(0);
+  }, [isDelivery, customerPincode, subtotal]);
 
   const dynamicallyScaledIngredients = useMemo(() => {
     return tempCustomIngredients.map(ing => ({
@@ -475,6 +536,7 @@ export default function Billing() {
         setFoundCustomer(data);
         setCustomerName(data.full_name || "");
         setCustomerAddress(data.address || "");
+        setCustomerPincode(data.pincode || "");
       } else setFoundCustomer(null);
     } catch(e) {}
   }, [currentTenantId]);
@@ -522,42 +584,23 @@ export default function Billing() {
     let qty = 1;
     let isWeighted = false;
 
-    // Normalize Marathi common phrases to digits/english text for regex parsing
     const mappings: Record<string, string> = {
-        'अडीचशे': '250',
-        'adishe': '250',
-        'पावशे': '250',
-        'pawshe': '250',
-        'शंभर': '100',
-        'shambhar': '100',
-        'अर्धा किलो': '500 gram',
-        'ardha kilo': '500 gram',
-        'दीड': '1.5',
-        'dedh': '1.5',
-        'अडीच': '2.5',
-        'रुपये': 'rupees',
-        'रु': 'rupees',
-        'rs': 'rupees',
-        'rupay': 'rupees',
-        'किलो': 'kg',
-        'kilo': 'kg',
-        'ग्रॅम': 'gram',
-        'g': 'gram',
-        'gm': 'gram'
+        'अडीचशे': '250', 'adishe': '250', 'पावशे': '250', 'pawshe': '250',
+        'शंभर': '100', 'shambhar': '100', 'अर्धा किलो': '500 gram', 'ardha kilo': '500 gram',
+        'दीड': '1.5', 'dedh': '1.5', 'अडीच': '2.5', 'रुपये': 'rupees', 'रु': 'rupees',
+        'rs': 'rupees', 'rupay': 'rupees', 'किलो': 'kg', 'kilo': 'kg', 'ग्रॅम': 'gram', 'g': 'gram', 'gm': 'gram'
     };
 
     for (const [word, replacement] of Object.entries(mappings)) {
         text = text.replace(new RegExp(word, 'g'), replacement);
     }
 
-    // 1. Extract Price (e.g. 170 rupees)
     const priceMatch = text.match(/(\d+)\s*rupees/);
     if (priceMatch) {
         price = Number(priceMatch[1]);
         text = text.replace(priceMatch[0], '');
     }
 
-    // 2. Extract Quantity (e.g. 250 gram)
     const qtyMatch = text.match(/(\d+|\d+\.\d+)\s*(kg|gram|grams)/);
     if (qtyMatch) {
         isWeighted = true;
@@ -575,7 +618,6 @@ export default function Billing() {
     const itemName = text.trim();
     if (!itemName) return toast({ title: "Voice Recognition Failed", description: "Could not detect item name.", variant: "destructive" });
 
-    // 3. Match Item
     const match = allItems.find(i => 
        getSafeItemName(i).toLowerCase().includes(itemName) || 
        (i as any).english_name?.toLowerCase().includes(itemName)
@@ -594,7 +636,6 @@ export default function Billing() {
         addItemToCart(match, finalQty, finalPrice);
         toast({ title: "Voice Added", description: `${match.item_name} added via voice.` });
     } else {
-        // Unknown Item -> Add temporary Custom Cart Item
         const tempItem = {
             id: `custom-${Date.now()}`,
             item_name: itemName.charAt(0).toUpperCase() + itemName.slice(1),
@@ -633,7 +674,6 @@ export default function Billing() {
        startCustomMasalaOrder();
        return;
     }
-    // Only show weight dialog if clicked normally (not from voice overriding the price)
     if (isWeightedItem(item) && priceOverride === undefined) { 
       setWeightedItem(item);
       setWeightInput("");
@@ -838,36 +878,21 @@ export default function Billing() {
     setShowCustomMasala(false);
   };
 
-  const addPayment = () => {
-    const amount = Number(paymentAmountInput);
-    if (!amount || amount <= 0) return toast({ title: "Invalid Amount", description: "Enter an amount greater than 0.", variant: "destructive" });
-    if (totalPaid + amount > finalTotal) return toast({ title: "Payment exceeds balance", variant: "destructive" });
-    
-    setPayments((prev) => [...prev, { id: crypto.randomUUID(), method: paymentMethodInput, amount }]);
-    
-    const newBalance = finalTotal - (totalPaid + amount);
-    if (newBalance > 0) {
-      setPaymentAmountInput(String(newBalance));
-      setPaymentMethodInput(prev => prev === "CASH" ? "UPI" : "CASH");
-    } else {
-      setPaymentAmountInput("");
+  // CLEAN 1-CLICK PAYMENT ACTIONS
+  const addPaymentByType = (type: "FULL" | "SPLIT" | "UDHAAR" | "ADVANCE", value?: number) => {
+    if (type === "FULL") {
+       setPayments([{ id: crypto.randomUUID(), method: paymentMethodInput, amount: balanceDue }]);
+    } else if (type === "SPLIT" && value !== undefined) {
+       setPayments([
+         { id: crypto.randomUUID(), method: "CASH", amount: value },
+         { id: crypto.randomUUID(), method: "UPI", amount: balanceDue - value }
+       ]);
+    } else if (type === "UDHAAR") {
+       setPayments([]);
+    } else if (type === "ADVANCE" && value !== undefined) {
+       if (!value || value <= 0 || value > balanceDue) return toast({ title: "Invalid Amount", variant: "destructive" });
+       setPayments([{ id: crypto.randomUUID(), method: paymentMethodInput, amount: value }]);
     }
-  };
-
-  const handleSmartSplit = (cashAmountStr: string) => {
-    const cashAmount = Number(cashAmountStr);
-    if (!cashAmount || cashAmount <= 0 || cashAmount >= balanceDue) {
-      return toast({ title: "Invalid Cash Amount", description: "Cash must be less than the total due.", variant: "destructive" });
-    }
-    
-    const upiAmount = balanceDue - cashAmount;
-    
-    setPayments(prev => [
-      ...prev, 
-      { id: crypto.randomUUID(), method: "CASH", amount: cashAmount },
-      { id: crypto.randomUUID(), method: "UPI", amount: upiAmount }
-    ]);
-    setPaymentAmountInput("");
   };
 
   const removePayment = (id: string) => setPayments((prev) => prev.filter((p) => p.id !== id));
@@ -876,14 +901,25 @@ export default function Billing() {
     if (!currentTenantId) return null;
     const phone = customerPhone.replace(/\D/g, "").slice(-10);
     if (!phone) return null;
-    if (foundCustomer) return foundCustomer;
+    if (foundCustomer) {
+      if ((customerAddress && foundCustomer.address !== customerAddress) || (customerPincode && foundCustomer.pincode !== customerPincode)) {
+          await (supabase as any).from("customers").update({ address: customerAddress, pincode: customerPincode }).eq("id", foundCustomer.id);
+      }
+      return foundCustomer;
+    }
     const { data: existing } = await (supabase as any).from("customers").select("*").eq("tenant_id", currentTenantId).eq("phone_number", phone).maybeSingle();
-    if (existing) return existing;
+    if (existing) {
+       if ((customerAddress && existing.address !== customerAddress) || (customerPincode && existing.pincode !== customerPincode)) {
+           await (supabase as any).from("customers").update({ address: customerAddress, pincode: customerPincode }).eq("id", existing.id);
+       }
+       return existing;
+    }
     const { data: created } = await (supabase as any).from("customers").insert({ 
       tenant_id: currentTenantId, 
       full_name: customerName || null, 
       phone_number: phone, 
       address: customerAddress || null, 
+      pincode: customerPincode || null,
       customer_type: "retail" 
     }).select("*").single();
     return created;
@@ -892,11 +928,12 @@ export default function Billing() {
   const createOrder = async () => {
     if (!currentTenantId || cart.length === 0) return;
     if (!orderNumber.trim()) return toast({ title: "Order number missing", variant: "destructive" });
+    if (isDelivery && !customerAddress) return toast({ title: "Delivery address missing", variant: "destructive" });
 
     setIsProcessing(true);
     try {
       let customer: Customer | null = null;
-      if (customerPhone || customerName || balanceDue > 0 || deliveryDate) customer = await ensureCustomer();
+      if (customerPhone || customerName || balanceDue > 0 || deliveryDate || isDelivery) customer = await ensureCustomer();
       if (balanceDue > 0 && !customer) throw new Error("Customer phone number is required for pending/credit orders.");
 
       const paymentStatus = totalPaid >= finalTotal && finalTotal > 0 ? "PAID" : totalPaid > 0 ? "PARTIAL" : "PENDING";
@@ -916,6 +953,7 @@ export default function Billing() {
         discount_type: discountType,
         discount_value: Number(discountInput) || 0,
         discount_amount: calculatedDiscount,
+        delivery_charge: isDelivery ? deliveryCharge : 0,
         created_by: billingUser.id 
       }).select("*").single();
 
@@ -985,6 +1023,7 @@ export default function Billing() {
         advancePaid: totalPaid,
         balanceDue: balanceDue,
         discountAmount: calculatedDiscount, 
+        deliveryCharge: isDelivery ? deliveryCharge : 0,
         payments 
       });
       setShowSuccessModal(true);
@@ -1002,7 +1041,7 @@ export default function Billing() {
   const resetBill = async () => {
     setCart([]); setPayments([]); setCustomerPhone(""); setCustomerName(""); setFoundCustomer(null);
     setDeliveryDate(""); setDiscountInput(""); setDiscountType("FIXED"); setSearchTerm(""); setSelectedCategory("ALL"); setQuickQuantity("1");
-    setOrderNotes(""); setCustomerAddress(""); setOrderMode("WALK_IN");
+    setOrderNotes(""); setCustomerAddress(""); setCustomerPincode(""); setIsDelivery(false); setDeliveryCharge(0); setOrderMode("WALK_IN");
     localStorage.removeItem('biillo-cart');
     if (currentTenantId) await fetchNextOrderNumber(currentTenantId);
   };
@@ -1016,7 +1055,8 @@ export default function Billing() {
     const phone = completedOrder?.customerPhone;
     if (!phone) return toast({ title: "No Phone Number", description: "Cannot send WhatsApp without a customer phone number.", variant: "destructive" });
     
-    const PUBLIC_DOMAIN = "https://retail.biillo.com"; 
+    // Uses your public Biillo jmm domain and points to the specific InvoiceView route
+    const PUBLIC_DOMAIN = "https://jmm.biillo.com"; 
     const invoiceLink = `${PUBLIC_DOMAIN}/#/invoice/${completedOrder.id}`;
     
     const message = encodeURIComponent(
@@ -1123,6 +1163,12 @@ export default function Billing() {
               <span className="font-semibold">- {formatCurrency(calculatedDiscount)}</span>
             </div>
           )}
+          {isDelivery && (
+             <div className="flex justify-between text-amber-600 mt-0.5">
+               <span className="font-medium text-[11px] uppercase tracking-wider">Delivery Fee</span>
+               <span className="font-semibold">+ {formatCurrency(deliveryCharge)}</span>
+             </div>
+          )}
           <div className="flex justify-between pt-2 border-t border-zinc-100 mt-1.5">
             <span className="font-semibold text-zinc-900 text-sm">Total</span>
             <span className="text-lg font-semibold text-zinc-900 tracking-tight">{formatCurrency(finalTotal)}</span>
@@ -1130,7 +1176,7 @@ export default function Billing() {
         </div>
 
         {!compact && (
-          <Button disabled={cart.length === 0} onClick={() => setPaymentDialogOpen(true)} className="h-11 w-full rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white font-semibold text-[14px] shadow-sm transition-all active:scale-[0.98]">
+          <Button disabled={cart.length === 0} onClick={() => setCheckoutOpen(true)} className="h-11 w-full rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white font-semibold text-[14px] shadow-sm transition-all active:scale-[0.98]">
             Checkout <ChevronRight className="ml-1.5 h-4 w-4" />
           </Button>
         )}
@@ -1359,60 +1405,14 @@ export default function Billing() {
               </div>
             </div>
 
-            {/* --- CLASSIC POS CATEGORY GRID (Mobile Horizontal Scroll / Desktop Grid) --- */}
-            <div className="flex flex-col gap-2 mb-3 shrink-0 p-2 bg-white rounded shadow-sm border border-zinc-300">
-                
-                {/* Full-width Yearly Masala Button */}
-                <button 
-                  onClick={startCustomMasalaOrder} 
-                  className="w-full flex items-center justify-center gap-2 rounded border border-indigo-300 bg-indigo-50 py-3 text-xs font-black text-indigo-700 hover:bg-indigo-100 transition-colors uppercase shadow-sm shrink-0"
-                >
+            <div className="p-3 border-t border-zinc-200 bg-white shadow-sm">
+              <div className="mb-3 pb-3 border-b border-zinc-200">
+                <button onClick={startCustomMasalaOrder} className="flex w-full items-center justify-center gap-2 rounded-xl border border-indigo-300 bg-indigo-50 py-2.5 text-xs font-black text-indigo-700 hover:bg-indigo-100 transition-colors uppercase shadow-sm">
                   <FlaskConical className="h-4 w-4" /> Yearly Masala
                 </button>
-
-                {/* SINGLE STRIP ON MOBILE, GRID ON DESKTOP */}
-                <div className="flex overflow-x-auto xl:flex-wrap gap-2 pt-1 pb-1 scrollbar-none">
-                  <button 
-                    onClick={() => setSelectedCategory("ALL")} 
-                    className={`shrink-0 px-4 py-2.5 rounded text-[10px] sm:text-[11px] font-black uppercase transition-all border shadow-sm ${
-                      selectedCategory === "ALL" 
-                        ? "bg-zinc-900 border-zinc-900 text-white" 
-                        : "bg-[#1E1E1E] border-[#1E1E1E] text-white hover:bg-zinc-800"
-                    }`}
-                  >
-                    ALL ITEMS
-                  </button>
-                  
-                  {quickCategories.map((cat, index) => {
-                    const isActive = selectedCategory === cat;
-                    const CATEGORY_COLORS = [
-                      { bg: "bg-[#e8f1ff]", border: "border-[#b3d4ff]", text: "text-[#1d4ed8]" }, 
-                      { bg: "bg-[#e6fffa]", border: "border-[#a3f0e1]", text: "text-[#0f766e]" }, 
-                      { bg: "bg-[#fef3c7]", border: "border-[#fde68a]", text: "text-[#b45309]" }, 
-                      { bg: "bg-[#f3e8ff]", border: "border-[#d8b4fe]", text: "text-[#7e22ce]" }, 
-                      { bg: "bg-[#ffe4e6]", border: "border-[#fecdd3]", text: "text-[#be123c]" }, 
-                      { bg: "bg-[#ffedd5]", border: "border-[#fed7aa]", text: "text-[#c2410c]" }, 
-                      { bg: "bg-[#dcfce7]", border: "border-[#bbf7d0]", text: "text-[#15803d]" }, 
-                    ];
-                    
-                    const theme = CATEGORY_COLORS[index % CATEGORY_COLORS.length];
-                    
-                    return (
-                      <button 
-                        key={cat} 
-                        onClick={() => setSelectedCategory(cat)} 
-                        className={`shrink-0 px-3 py-2.5 rounded text-[10px] sm:text-[11px] font-black uppercase transition-all border shadow-sm whitespace-nowrap text-center ${
-                          isActive 
-                            ? "bg-indigo-600 border-indigo-700 text-white" 
-                            : `${theme.bg} ${theme.border} ${theme.text} hover:brightness-95`
-                        }`}
-                      >
-                        {cat.replace(/_/g, " ")}
-                      </button>
-                    );
-                  })}
-                </div>
               </div>
+              <PosCategoryBar selectedCategory={selectedCategory} setSelectedCategory={setSelectedCategory} quickCategories={quickCategories} />
+            </div>
           </header>
 
           <div className="flex min-h-0 flex-1">
@@ -1507,12 +1507,12 @@ export default function Billing() {
         </div>
       )}
 
-      {/* --- STREAMLINED 1-STEP MOBILE CHECKOUT --- */}
+      {/* --- UNIVERSAL 1-STEP CHECKOUT (Now used for BOTH Mobile & Desktop) --- */}
       {checkoutOpen && (
-        <div className="fixed inset-0 z-[100] bg-zinc-50 flex flex-col xl:hidden print:hidden">
-          <div className="h-14 px-4 bg-white border-b border-zinc-200 flex items-center justify-between shrink-0 shadow-sm">
+        <div className="fixed inset-0 z-[100] bg-zinc-50 flex flex-col print:hidden">
+          <div className="h-14 px-4 bg-white border-b border-zinc-200 flex items-center justify-between shrink-0 shadow-sm max-w-4xl mx-auto w-full">
             <div className="flex items-center gap-2.5">
-              <button onClick={() => setCheckoutOpen(false)} className="p-1.5 text-zinc-500 bg-zinc-50 border border-zinc-200 rounded-lg active:bg-zinc-100"><X className="h-4.5 w-4.5" /></button>
+              <button onClick={() => setCheckoutOpen(false)} className="p-1.5 text-zinc-500 bg-zinc-50 border border-zinc-200 rounded-lg active:bg-zinc-100 hover:bg-zinc-100 transition-colors"><X className="h-4.5 w-4.5" /></button>
               <h2 className="text-sm font-semibold text-zinc-900">Checkout</h2>
             </div>
             <div className="text-right">
@@ -1520,9 +1520,10 @@ export default function Billing() {
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-3 space-y-3">
+          <div className="flex-1 overflow-y-auto p-3 sm:p-5 space-y-4 max-w-4xl mx-auto w-full pb-32">
+            
             {/* 1. CART ITEMS REVIEW */}
-            <div className="bg-white p-4 border border-zinc-200 rounded-2xl shadow-sm">
+            <div className="bg-white p-4 sm:p-5 border border-zinc-200 rounded-2xl shadow-sm">
               <div className="flex justify-between items-center mb-3 pb-2 border-b border-zinc-100">
                  <Label className="text-[11px] font-semibold tracking-wider text-zinc-500 uppercase">Ledger Items</Label>
               </div>
@@ -1531,292 +1532,234 @@ export default function Billing() {
                    <div key={item.cartId} className="flex flex-col gap-1.5 pb-2.5 border-b border-zinc-100 last:border-0 last:pb-0">
                      <div className="flex justify-between items-start">
                        <div className="flex-1 pr-3">
-                         <span className="font-semibold text-zinc-900 text-sm leading-tight block">{getSafeItemName(item)}</span>
+                         <span className="font-semibold text-zinc-900 text-sm sm:text-base leading-tight block">{getSafeItemName(item)}</span>
                          <button onClick={() => setNumpadConfig({
                            isOpen: true,
                            title: `Edit Price: ${getSafeItemName(item)}`,
                            value: String(item.selling_price || 0),
                            allowDecimal: true,
                            onConfirm: (v) => updateCartItemPrice(item.cartId, Number(v))
-                        })} className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-100 rounded px-1.5 py-0.5 hover:bg-indigo-100 transition-colors mt-1">
+                        })} className="inline-flex items-center text-[10px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-100 rounded px-1.5 py-0.5 hover:bg-indigo-100 transition-colors mt-1">
                           {formatCurrency(item.selling_price || 0)} / {getItemDisplayUnit(item)} ✎
                          </button>
                        </div>
-                       <span className="font-semibold text-zinc-900 text-sm">{formatCurrency(item.cartQuantity * Number(item.selling_price || 0))}</span>
+                       <span className="font-semibold text-zinc-900 text-sm sm:text-base">{formatCurrency(item.cartQuantity * Number(item.selling_price || 0))}</span>
                      </div>
                      <div className="flex items-center justify-between mt-1">
                        <div className="flex items-center border border-zinc-200 bg-zinc-50 h-8 rounded-lg overflow-hidden">
-                         <button type="button" onClick={() => updateCartQuantity(item.cartId, item.cartQuantity - 1)} className="flex h-full w-8 items-center justify-center text-zinc-600 border-r border-zinc-200 active:bg-zinc-200"><Minus className="h-3.5 w-3.5" /></button>
+                         <button type="button" onClick={() => updateCartQuantity(item.cartId, item.cartQuantity - 1)} className="flex h-full w-8 items-center justify-center text-zinc-600 border-r border-zinc-200 active:bg-zinc-200 hover:bg-zinc-200 transition-colors"><Minus className="h-3.5 w-3.5" /></button>
                          <span className="min-w-[2.2rem] text-center text-[12px] font-semibold text-zinc-900 bg-white h-full flex items-center justify-center">{item.cartQuantity}</span>
-                         <button type="button" onClick={() => updateCartQuantity(item.cartId, item.cartQuantity + 1)} className="flex h-full w-8 items-center justify-center text-zinc-600 border-l border-zinc-200 active:bg-zinc-200"><Plus className="h-3.5 w-3.5" /></button>
+                         <button type="button" onClick={() => updateCartQuantity(item.cartId, item.cartQuantity + 1)} className="flex h-full w-8 items-center justify-center text-zinc-600 border-l border-zinc-200 active:bg-zinc-200 hover:bg-zinc-200 transition-colors"><Plus className="h-3.5 w-3.5" /></button>
                        </div>
-                       <button onClick={() => removeCartItem(item.cartId)} className="flex items-center justify-center h-8 w-8 rounded-lg border border-transparent text-zinc-400 active:bg-rose-50 active:text-rose-600"><Trash2 className="h-4 w-4" /></button>
+                       <button onClick={() => removeCartItem(item.cartId)} className="flex items-center justify-center h-8 w-8 rounded-lg border border-transparent text-zinc-400 active:bg-rose-50 active:text-rose-600 hover:text-rose-600 hover:bg-rose-50 transition-colors"><Trash2 className="h-4 w-4" /></button>
                      </div>
                    </div>
                  ))}
               </div>
             </div>
-            
-            {/* 2. BIG TOTAL & PAYMENTS WITH DISCOUNT */}
-            <div className="bg-white p-4 border border-zinc-200 rounded-2xl shadow-sm space-y-4">
-              <div className="text-center pb-4 border-b border-zinc-100 bg-zinc-50/50 p-3 rounded-xl">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-1">Amount Due</p>
-                <p className="text-4xl font-semibold tracking-tight text-zinc-900">{formatCurrency(balanceDue)}</p>
-                {totalPaid > 0 && <p className="text-[11px] font-medium text-emerald-700 mt-2 bg-emerald-50 border border-emerald-100 inline-block px-2.5 py-1 rounded-md">Paid: {formatCurrency(totalPaid)}</p>}
+
+            {/* 2. CUSTOMER CRM & DELIVERY */}
+            <div className="bg-white p-4 sm:p-5 border border-zinc-200 rounded-2xl shadow-sm space-y-3">
+               <Label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">Customer & Delivery</Label>
+               
+               <div className="relative">
+                 <Phone className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-zinc-400" />
+                 <button onClick={() => setNumpadConfig({isOpen: true, title: "Customer Phone", value: customerPhone, allowDecimal: false, onConfirm: (v) => handlePhoneChange(v)})} className="h-12 w-full pl-10 text-left text-sm rounded-xl font-medium bg-white border border-zinc-200 shadow-sm flex items-center hover:bg-zinc-50 transition-colors">
+                   {customerPhone || <span className="text-zinc-400">Phone Number</span>}
+                 </button>
+               </div>
+
+               <div className="flex items-center justify-between bg-zinc-50 border border-zinc-200/80 p-3 rounded-xl mt-2">
+                 <span className="text-[13px] font-semibold text-zinc-700 flex items-center gap-2"><Truck className="w-4 h-4"/> Home Delivery?</span>
+                 <Switch checked={isDelivery} onCheckedChange={setIsDelivery} className="data-[state=checked]:bg-zinc-900" />
+               </div>
+               
+               {(customerPhone.length >= 10 || isDelivery) && (
+                 <div className="space-y-3 mt-2 animate-in fade-in slide-in-from-top-2 duration-300">
+                   <div className="relative">
+                     <UserRound className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-zinc-400" />
+                     <Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Full Name" className="h-12 pl-10 text-sm rounded-xl font-medium bg-white border-zinc-200 shadow-sm" />
+                   </div>
+
+                   {isDelivery && (
+                     <div className="space-y-2 bg-indigo-50/50 p-3 rounded-xl border border-indigo-100 animate-in fade-in slide-in-from-top-2 duration-300">
+                       <div className="relative">
+                         <MapPinHouse className="absolute left-3.5 top-3.5 h-4.5 w-4.5 text-zinc-400" />
+                         <textarea 
+                           value={customerAddress} 
+                           onChange={e => setCustomerAddress(e.target.value)} 
+                           placeholder="Full Delivery Address" 
+                           className="w-full pl-10 py-3 text-sm rounded-xl font-medium bg-white border border-zinc-200 shadow-sm min-h-[80px] resize-none focus:outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900 transition-all"
+                         />
+                       </div>
+                       <div className="flex gap-2">
+                         <Input 
+                           value={customerPincode} 
+                           onChange={e => setCustomerPincode(e.target.value.replace(/\D/g, '').slice(0, 6))} 
+                           placeholder="Pincode" 
+                           className="h-11 flex-1 text-sm rounded-xl font-medium bg-white border-zinc-200 shadow-sm" 
+                           maxLength={6}
+                         />
+                         <div className="relative w-28 shrink-0">
+                           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-zinc-500">₹</span>
+                           <Input 
+                             type="number"
+                             value={deliveryCharge || ""}
+                             onChange={e => setDeliveryCharge(Number(e.target.value))}
+                             placeholder="Fee"
+                             className="h-11 w-full pl-7 pr-2 text-sm rounded-xl font-semibold bg-amber-50 border-amber-200 text-amber-800 shadow-sm focus-visible:ring-amber-500" 
+                           />
+                         </div>
+                       </div>
+                     </div>
+                   )}
+                 </div>
+               )}
+            </div>
+
+            {/* 3. ORDER SETTINGS */}
+            <div className="bg-white p-4 sm:p-5 border border-zinc-200 rounded-2xl shadow-sm space-y-3">
+               <Label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">Order Settings</Label>
+               <div className="relative">
+                 <Receipt className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-zinc-400" />
+                 <Input value={orderNumber} onChange={e => setOrderNumber(e.target.value)} className="h-12 pl-10 text-sm rounded-xl font-medium bg-white border-zinc-200 shadow-sm w-full"/>
+               </div>
+               
+               <div className="flex flex-col gap-2">
+                 <Button onClick={() => setDeliveryDate("")} variant={!deliveryDate ? "default" : "outline"} className={`h-11 rounded-xl font-medium justify-start px-3 text-xs transition-colors shadow-sm ${!deliveryDate ? 'bg-zinc-900 text-white' : 'bg-white text-zinc-700 border-zinc-200'}`}>
+                   <CheckCircle2 className={`h-4 w-4 mr-2 ${!deliveryDate ? 'text-white' : 'text-transparent'}`} />
+                   Instant (Today)
+                 </Button>
+                 <div className="relative">
+                   <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className={`h-11 w-full rounded-xl border-zinc-200 text-[13px] font-medium px-3 shadow-sm focus-visible:ring-zinc-900 ${deliveryDate ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-white text-zinc-700'}`} />
+                 </div>
+               </div>
+
+               <div className="relative">
+                 <NotebookPen className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-zinc-400" />
+                 <Input value={orderNotes} onChange={e => setOrderNotes(e.target.value)} placeholder="Add Notes..." className="h-12 pl-10 text-sm rounded-xl font-medium bg-white border-zinc-200 shadow-sm" />
+               </div>
+               <div className="flex gap-1.5 p-1.5 bg-zinc-100 border border-zinc-200 rounded-xl mt-3">
+                 {["WALK_IN", "MONTHLY", "ONLINE"].map(m => (
+                   <button key={m} onClick={() => setOrderMode(m)} className={`flex-1 h-10 rounded-lg text-xs font-semibold transition-colors ${orderMode === m ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-200/50'}`}>{m.replace('_', ' ')}</button>
+                 ))}
+               </div>
+            </div>
+
+            {/* 4. TOTALS & RECORD PAYMENT (MOVED TO BOTTOM & FIXED UX) */}
+            <div className="bg-white p-4 sm:p-5 border border-zinc-200 rounded-2xl shadow-sm space-y-5">
+              <div className="text-center pb-5 border-b border-zinc-100 bg-zinc-50/50 p-4 rounded-xl">
+                <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">Amount Due</p>
+                <p className="text-5xl font-semibold tracking-tight text-zinc-900">{formatCurrency(balanceDue)}</p>
+                {totalPaid > 0 && <p className="text-[11px] font-medium text-emerald-700 mt-3 bg-emerald-50 border border-emerald-100 inline-block px-3 py-1.5 rounded-md">Paid: {formatCurrency(totalPaid)}</p>}
               </div>
 
               {/* DISCOUNT MODULE */}
               <div className="space-y-2 pt-1">
                  <Label className="text-[11px] font-semibold text-zinc-500 uppercase flex items-center gap-1.5"><Tag className="h-3.5 w-3.5"/> Discount (Optional)</Label>
                  <div className="flex gap-2">
-                   <div className="flex bg-zinc-100 border border-zinc-200 rounded-xl shrink-0 p-1">
+                   <div className="flex bg-zinc-100 border border-zinc-200 rounded-xl shrink-0 p-1.5">
                      <button onClick={() => { setDiscountType("FIXED"); setDiscountInput(""); }} className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${discountType === 'FIXED' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>₹</button>
                      <button onClick={() => { setDiscountType("PERCENT"); setDiscountInput(""); }} className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${discountType === 'PERCENT' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>%</button>
                    </div>
-                   <button onClick={() => setNumpadConfig({isOpen: true, title: "Enter Discount", value: discountInput, allowDecimal: true, onConfirm: (v) => setDiscountInput(v)})} className="h-11 flex-1 rounded-xl border border-zinc-200 bg-white text-left px-3 text-sm font-medium text-zinc-800 shadow-sm flex items-center">
+                   <button onClick={() => setNumpadConfig({isOpen: true, title: "Enter Discount", value: discountInput, allowDecimal: true, onConfirm: (v) => setDiscountInput(v)})} className="h-12 flex-1 rounded-xl border border-zinc-200 bg-white text-left px-4 text-sm font-medium text-zinc-800 shadow-sm hover:bg-zinc-50 transition-colors">
                      {discountInput ? (discountType === 'FIXED' ? `₹ ${discountInput}` : `${discountInput} %`) : "0"}
                    </button>
                  </div>
                  {calculatedDiscount > 0 && (
-                   <p className="text-[11px] font-medium text-indigo-600 text-right pr-1">- {formatCurrency(calculatedDiscount)} OFF</p>
+                   <p className="text-[11px] font-medium text-indigo-600 text-right pr-2">- {formatCurrency(calculatedDiscount)} OFF</p>
                  )}
               </div>
 
-              <div className="space-y-3 pt-4 border-t border-zinc-100">
+              {/* PAYMENT RECORDING */}
+              <div className="space-y-4 pt-4 border-t border-zinc-100">
                  <Label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">Record Payment</Label>
-                 <div className="flex gap-1.5 bg-zinc-100 border border-zinc-200 p-1 rounded-xl">
+                 
+                 {/* Step 1: Select Payment Method */}
+                 <div className="flex gap-1.5 bg-zinc-100 border border-zinc-200 p-1.5 rounded-xl">
                    {["CASH", "UPI", "CARD"].map(m => (
-                     <button key={m} onClick={() => setPaymentMethodInput(m as PaymentMethod)} className={`flex-1 h-10 rounded-lg text-xs font-medium transition-colors ${paymentMethodInput === m ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>{m}</button>
+                     <button key={m} onClick={() => setPaymentMethodInput(m as PaymentMethod)} className={`flex-1 h-11 rounded-lg text-xs font-bold transition-colors ${paymentMethodInput === m ? 'bg-zinc-900 text-white shadow-sm' : 'text-zinc-600 hover:text-zinc-800 hover:bg-zinc-200/50'}`}>{m}</button>
                    ))}
                  </div>
                  
-                 <div className="flex gap-2">
-                   <button onClick={() => setNumpadConfig({isOpen: true, title: "Payment Amount", value: "", allowDecimal: true, onConfirm: (v) => setPaymentAmountInput(String(v))})} className="h-12 flex-1 rounded-xl border border-zinc-200 bg-white shadow-sm text-left px-3 text-[15px] font-medium text-zinc-800 flex items-center hover:bg-zinc-50">
-                     {paymentAmountInput ? `₹ ${paymentAmountInput}` : "Amt..."}
-                   </button>
-                   <Button onClick={addPayment} className="h-12 px-5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white font-medium text-sm transition-all active:scale-[0.98]">Add</Button>
-                 </div>
-                 
+                 {/* Step 2: 1-Click Action Buttons (No manual input needed first) */}
                  {balanceDue > 0 && (
-                   <div className="flex gap-2 overflow-x-auto scrollbar-none py-1">
-                     <button onClick={() => setPaymentAmountInput(String(balanceDue))} className="px-3 py-2 bg-white border border-zinc-200 shadow-sm rounded-lg text-[11px] font-medium text-zinc-700 whitespace-nowrap active:scale-[0.98]">Full Pay</button>
-                     <button onClick={() => setNumpadConfig({isOpen: true, title: "Enter CASH (Rest is UPI)", value: "", allowDecimal: true, onConfirm: handleSmartSplit})} className="px-3 py-2 bg-white border border-zinc-200 shadow-sm rounded-lg text-[11px] font-medium text-zinc-700 whitespace-nowrap active:scale-[0.98]">Split</button>
-                     <button onClick={() => { setPayments([]); setPaymentAmountInput(""); }} className="px-3 py-2 bg-zinc-50 border border-zinc-200 shadow-sm rounded-lg text-[11px] font-medium text-zinc-700 whitespace-nowrap active:scale-[0.98]">Udhaar</button>
-                     <button onClick={() => setNumpadConfig({isOpen: true, title: "Advance", value: "", allowDecimal: true, onConfirm: (v) => setPaymentAmountInput(String(v))})} className="px-3 py-2 bg-white border border-zinc-200 shadow-sm rounded-lg text-[11px] font-medium text-zinc-700 whitespace-nowrap active:scale-[0.98]">Adv.</button>
+                   <div className="grid grid-cols-2 gap-3 mt-3 animate-in fade-in duration-300">
+                     <button onClick={() => addPaymentByType("FULL")} className="col-span-2 px-4 py-3.5 bg-zinc-900 border border-zinc-900 rounded-xl text-sm font-bold text-white shadow-md active:scale-[0.98] transition-transform">
+                       Full Pay {paymentMethodInput}
+                     </button>
+                     
+                     <button onClick={() => setNumpadConfig({isOpen: true, title: `Enter CASH (Rest is ${paymentMethodInput === 'CASH' ? 'UPI' : paymentMethodInput})`, value: "", allowDecimal: true, onConfirm: (v) => addPaymentByType("SPLIT", Number(v))})} className="px-4 py-3 bg-white border border-zinc-200 shadow-sm rounded-xl text-xs sm:text-sm font-semibold text-zinc-800 active:scale-[0.98] hover:bg-zinc-50 transition-all">
+                       Split Payment
+                     </button>
+                     
+                     <button onClick={() => addPaymentByType("UDHAAR")} className="px-4 py-3 bg-zinc-50 border border-zinc-200 shadow-sm rounded-xl text-xs sm:text-sm font-semibold text-zinc-800 active:scale-[0.98] hover:bg-zinc-100 transition-all">
+                       Udhaar (Credit)
+                     </button>
+                     
+                     <button onClick={() => setNumpadConfig({isOpen: true, title: "Advance Amount", value: "", allowDecimal: true, onConfirm: (v) => { setTimeout(() => addPaymentByType("ADVANCE", Number(v)), 100); }})} className="col-span-2 px-4 py-3 bg-white border border-zinc-200 shadow-sm rounded-xl text-sm font-semibold text-zinc-800 active:scale-[0.98] hover:bg-zinc-50 transition-all">
+                       Custom Advance
+                     </button>
                    </div>
                  )}
 
+                 {/* Active Payments List */}
                  {payments.length > 0 && (
-                    <div className="pt-3 border-t border-zinc-100 space-y-2">
-                      {payments.map(p => (
-                        <div key={p.id} className="flex justify-between items-center bg-zinc-50 p-2.5 rounded-xl border border-zinc-200">
-                          <span className="font-medium text-zinc-600 text-[11px]">{p.method}</span>
-                          <div className="flex items-center gap-2.5">
-                            <span className="font-semibold text-zinc-900 text-[13px]">{formatCurrency(p.amount)}</span>
-                            <button onClick={() => removePayment(p.id)} className="text-zinc-400 hover:text-rose-600 bg-white border border-zinc-200 hover:border-rose-200 p-1.5 rounded-lg transition-colors"><Trash2 className="h-3.5 w-3.5" /></button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                   <div className="pt-4 mt-3 border-t border-zinc-100 space-y-2.5">
+                     {payments.map(p => (
+                       <div key={p.id} className="flex justify-between items-center bg-zinc-50/80 p-3 rounded-xl border border-zinc-200 shadow-sm">
+                         <span className="font-semibold text-zinc-700 text-xs">{p.method}</span>
+                         <div className="flex items-center gap-3">
+                           <span className="font-bold text-zinc-900 text-sm">{formatCurrency(p.amount)}</span>
+                           <button onClick={() => removePayment(p.id)} className="text-zinc-400 bg-white border border-zinc-200 hover:text-rose-600 hover:bg-rose-50 p-2 rounded-lg transition-colors"><Trash2 className="h-4 w-4" /></button>
+                         </div>
+                       </div>
+                     ))}
+                   </div>
                  )}
               </div>
             </div>
-
-            {/* 3. CUSTOMER CRM */}
-            <div className="bg-white p-4 border border-zinc-200 rounded-2xl shadow-sm space-y-3">
-               <Label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">Customer</Label>
-               <div className="relative">
-                 <Phone className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-zinc-400" />
-                 <button onClick={() => setNumpadConfig({isOpen: true, title: "Customer Phone", value: customerPhone, allowDecimal: false, onConfirm: (v) => handlePhoneChange(v)})} className="h-12 w-full pl-10 text-left text-sm rounded-xl font-medium bg-white border border-zinc-200 shadow-sm flex items-center hover:bg-zinc-50">
-                   {customerPhone || <span className="text-zinc-400">Phone Number</span>}
-                 </button>
-               </div>
-               {customerPhone.length >= 10 && (
-                 <div className="space-y-2 mt-1">
-                   <div className="relative">
-                     <UserRound className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-zinc-400" />
-                     <Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Full Name" className="h-12 pl-10 text-sm rounded-xl font-medium bg-white border-zinc-200 shadow-sm" />
-                   </div>
-                 </div>
-               )}
-            </div>
-
-            {/* 4. ORDER SETTINGS */}
-            <div className="bg-white p-4 border border-zinc-200 rounded-2xl shadow-sm space-y-3">
-               <Label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">Order Settings</Label>
-               <div className="relative">
-                 <Receipt className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-zinc-400" />
-                 <Input value={orderNumber} onChange={e => setOrderNumber(e.target.value)} className="h-12 pl-10 text-sm rounded-xl font-medium bg-white border-zinc-200 shadow-sm w-full"/>
-               </div>
-               
-               <div className="flex flex-col gap-2">
-                 <Button onClick={() => setDeliveryDate("")} variant={!deliveryDate ? "default" : "outline"} className={`h-11 rounded-xl font-medium justify-start px-3 text-xs transition-colors shadow-sm ${!deliveryDate ? 'bg-zinc-900 text-white' : 'bg-white text-zinc-700 border-zinc-200'}`}>
-                   <CheckCircle2 className={`h-4 w-4 mr-2 ${!deliveryDate ? 'text-white' : 'text-transparent'}`} />
-                   Instant (Today)
-                 </Button>
-                 <div className="relative">
-                   <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className={`h-11 w-full rounded-xl border-zinc-200 text-[13px] font-medium px-3 shadow-sm focus-visible:ring-zinc-900 ${deliveryDate ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-white text-zinc-700'}`} />
-                 </div>
-               </div>
-
-               <div className="relative">
-                 <NotebookPen className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-zinc-400" />
-                 <Input value={orderNotes} onChange={e => setOrderNotes(e.target.value)} placeholder="Add Notes..." className="h-12 pl-10 text-sm rounded-xl font-medium bg-white border-zinc-200 shadow-sm" />
-               </div>
-               <div className="flex gap-1.5 p-1 bg-zinc-100 border border-zinc-200 rounded-xl mt-3">
-                 {["WALK_IN", "MONTHLY", "ONLINE"].map(m => (
-                   <button key={m} onClick={() => setOrderMode(m)} className={`flex-1 h-9 rounded-lg text-[10px] font-medium transition-colors ${orderMode === m ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>{m.replace('_', ' ')}</button>
-                 ))}
-               </div>
-            </div>
           </div>
           
-          <div className="p-4 border-t border-zinc-200 bg-white shrink-0 shadow-[0_-4px_15px_rgba(0,0,0,0.02)]">
-            <Button disabled={isProcessing || (balanceDue > 0 && !customerPhone)} onClick={createOrder} className="h-14 w-full rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-[15px] font-semibold text-white transition-all active:scale-[0.98] shadow-sm">
+          <div className="p-4 sm:p-5 border-t border-zinc-200 bg-white shrink-0 shadow-[0_-4px_15px_rgba(0,0,0,0.05)] w-full mx-auto fixed bottom-0 left-0 right-0 max-w-4xl">
+            <Button disabled={isProcessing || (balanceDue > 0 && !customerPhone) || (isDelivery && !customerAddress)} onClick={createOrder} className="h-14 w-full rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-[15px] font-semibold text-white transition-all active:scale-[0.98] shadow-md">
               {isProcessing ? "Processing..." : balanceDue > 0 ? `Save — ${formatCurrency(balanceDue)} Due` : "Complete Order"}
             </Button>
           </div>
         </div>
       )}
 
-      {/* --- DESKTOP-ONLY QUICK PAYMENT DIALOG --- */}
-      <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
-        <DialogContent aria-describedby={undefined} className="sm:max-w-[500px] w-[95vw] rounded-2xl p-0 overflow-hidden bg-zinc-50/50 flex flex-col max-h-[90dvh]">
-          <div className="flex items-center justify-between border-b border-zinc-200/80 px-5 py-4 bg-white shrink-0 shadow-sm">
-            <div>
-              <DialogTitle className="text-base font-semibold text-zinc-900 tracking-tight">Order Checkout</DialogTitle>
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-4 sm:p-5">
-            <div className="border border-zinc-200 bg-white rounded-2xl p-5 text-center mb-5 shadow-sm">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">Amount Due</p>
-              <p className="text-4xl font-semibold text-zinc-900 tracking-tight">{formatCurrency(balanceDue)}</p>
-              {totalPaid > 0 && <p className="text-[11px] font-medium text-indigo-700 mt-2.5 bg-indigo-50 border border-indigo-100 inline-block px-3 py-1 rounded-lg">Paid: {formatCurrency(totalPaid)}</p>}
-            </div>
-
-            <div className="space-y-4">
-              {/* DISCOUNT MODULE */}
-              <div className="space-y-2 bg-white border border-zinc-200 p-4 rounded-2xl shadow-sm">
-                 <Label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1.5"><Tag className="h-3.5 w-3.5"/> Discount</Label>
-                 <div className="flex gap-2">
-                   <div className="flex bg-zinc-100 border border-zinc-200 rounded-xl shrink-0 p-1">
-                     <button onClick={() => { setDiscountType("FIXED"); setDiscountInput(""); }} className={`px-4 rounded-lg text-sm font-medium transition-colors ${discountType === 'FIXED' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>₹</button>
-                     <button onClick={() => { setDiscountType("PERCENT"); setDiscountInput(""); }} className={`px-4 rounded-lg text-sm font-medium transition-colors ${discountType === 'PERCENT' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>%</button>
-                   </div>
-                   <button onClick={() => setNumpadConfig({isOpen: true, title: "Enter Discount", value: discountInput, allowDecimal: true, onConfirm: (v) => setDiscountInput(v)})} className="h-11 flex-1 rounded-xl border border-zinc-200 bg-white text-left px-3.5 text-sm font-medium text-zinc-800 shadow-sm hover:bg-zinc-50 transition-colors">
-                     {discountInput ? (discountType === 'FIXED' ? `₹ ${discountInput}` : `${discountInput} %`) : "0"}
-                   </button>
-                 </div>
-                 {calculatedDiscount > 0 && (
-                   <p className="text-[11px] font-medium text-indigo-600 text-right pr-1">- {formatCurrency(calculatedDiscount)} OFF</p>
-                 )}
-              </div>
-
-              <div className="space-y-3 bg-white border border-zinc-200 p-4 rounded-2xl shadow-sm">
-                <div className="flex justify-between items-center mb-1">
-                   <Label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">Payment Entry</Label>
-                </div>
-                
-                <div className="flex gap-1.5 bg-zinc-100 border border-zinc-200 p-1 rounded-xl mb-3">
-                  {["CASH", "UPI", "CARD"].map(m => (
-                    <button key={m} onClick={() => setPaymentMethodInput(m as PaymentMethod)} className={`flex-1 h-10 rounded-lg text-[11px] font-medium transition-colors ${paymentMethodInput === m ? 'bg-zinc-900 text-white shadow-sm' : 'text-zinc-600 hover:text-zinc-800'}`}>{m}</button>
-                  ))}
-                </div>
-
-                <div className="flex gap-2">
-                  <button onClick={() => setNumpadConfig({isOpen: true, title: "Payment Amount", value: "", allowDecimal: true, onConfirm: (v) => setPaymentAmountInput(String(v))})} className="h-11 flex-1 rounded-xl border border-zinc-200 bg-white text-left px-3 text-[15px] font-medium text-zinc-800 flex items-center hover:bg-zinc-50 shadow-sm">
-                    {paymentAmountInput ? `₹ ${paymentAmountInput}` : "Amt..."}
-                  </button>
-                  <Button onClick={addPayment} className="h-11 px-6 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white font-medium text-sm transition-all active:scale-[0.98]">Add</Button>
-                </div>
-                
-                {balanceDue > 0 && (
-                  <div className="flex gap-2 overflow-x-auto scrollbar-none py-1 mt-1">
-                    <button onClick={() => setPaymentAmountInput(String(balanceDue))} className="px-3 py-2 bg-white border border-zinc-200 rounded-lg text-[11px] font-medium text-zinc-700 whitespace-nowrap shadow-sm active:scale-[0.98]">Full Pay</button>
-                    <button onClick={() => setNumpadConfig({isOpen: true, title: "Enter CASH (Rest is UPI)", value: "", allowDecimal: true, onConfirm: handleSmartSplit})} className="px-3 py-2 bg-white border border-zinc-200 rounded-lg text-[11px] font-medium text-zinc-700 whitespace-nowrap shadow-sm active:scale-[0.98]">Split</button>
-                    <button onClick={() => { setPayments([]); setPaymentAmountInput(""); }} className="px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-lg text-[11px] font-medium text-zinc-700 whitespace-nowrap shadow-sm active:scale-[0.98]">Udhaar</button>
-                    <button onClick={() => setNumpadConfig({isOpen: true, title: "Advance", value: "", allowDecimal: true, onConfirm: (v) => setPaymentAmountInput(String(v))})} className="px-3 py-2 bg-white border border-zinc-200 rounded-lg text-[11px] font-medium text-zinc-700 whitespace-nowrap shadow-sm active:scale-[0.98]">Adv.</button>
-                  </div>
-                )}
-
-                {payments.length > 0 && (
-                  <div className="pt-3 mt-2 border-t border-zinc-100 space-y-1.5">
-                    {payments.map(p => (
-                      <div key={p.id} className="flex justify-between items-center bg-zinc-50/80 p-2.5 border border-zinc-200 rounded-xl shadow-sm">
-                        <span className="font-medium text-zinc-700 text-[11px]">{p.method}</span>
-                        <div className="flex items-center gap-3">
-                          <span className="font-semibold text-zinc-900 text-[13px]">{formatCurrency(p.amount)}</span>
-                          <button onClick={() => removePayment(p.id)} className="text-zinc-400 bg-white border border-zinc-200 hover:text-rose-600 hover:bg-rose-50 p-1.5 rounded-lg transition-colors"><Trash2 className="h-3.5 w-3.5" /></button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* 3. CUSTOMER CRM */}
-            <div className="bg-white p-4 border border-zinc-200 rounded-2xl shadow-sm space-y-3">
-               <Label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">Customer</Label>
-               <div className="relative">
-                 <Phone className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-zinc-400" />
-                 <button onClick={() => setNumpadConfig({isOpen: true, title: "Customer Phone", value: customerPhone, allowDecimal: false, onConfirm: (v) => handlePhoneChange(v)})} className="h-12 w-full pl-10 text-left text-sm rounded-xl font-medium bg-white border border-zinc-200 shadow-sm flex items-center hover:bg-zinc-50">
-                   {customerPhone || <span className="text-zinc-400">Phone Number</span>}
-                 </button>
-               </div>
-               {customerPhone.length >= 10 && (
-                 <div className="space-y-2 mt-1">
-                   <div className="relative">
-                     <UserRound className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-zinc-400" />
-                     <Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Full Name" className="h-12 pl-10 text-sm rounded-xl font-medium bg-white border-zinc-200 shadow-sm" />
-                   </div>
-                 </div>
-               )}
-            </div>
-
-            {/* 4. ORDER SETTINGS */}
-            <div className="bg-white p-4 border border-zinc-200 rounded-2xl shadow-sm space-y-3">
-               <Label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">Order Settings</Label>
-               <div className="relative">
-                 <Receipt className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-zinc-400" />
-                 <Input value={orderNumber} onChange={e => setOrderNumber(e.target.value)} className="h-12 pl-10 text-sm rounded-xl font-medium bg-white border-zinc-200 shadow-sm w-full"/>
-               </div>
-               
-               <div className="flex flex-col gap-2">
-                 <Button onClick={() => setDeliveryDate("")} variant={!deliveryDate ? "default" : "outline"} className={`h-11 rounded-xl font-medium justify-start px-3 text-xs transition-colors shadow-sm ${!deliveryDate ? 'bg-zinc-900 text-white' : 'bg-white text-zinc-700 border-zinc-200'}`}>
-                   <CheckCircle2 className={`h-4 w-4 mr-2 ${!deliveryDate ? 'text-white' : 'text-transparent'}`} />
-                   Instant (Today)
-                 </Button>
-                 <div className="relative">
-                   <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className={`h-11 w-full rounded-xl border-zinc-200 text-[13px] font-medium px-3 shadow-sm focus-visible:ring-zinc-900 ${deliveryDate ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-white text-zinc-700'}`} />
-                 </div>
-               </div>
-
-               <div className="relative">
-                 <NotebookPen className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-zinc-400" />
-                 <Input value={orderNotes} onChange={e => setOrderNotes(e.target.value)} placeholder="Add Notes..." className="h-12 pl-10 text-sm rounded-xl font-medium bg-white border-zinc-200 shadow-sm" />
-               </div>
-               <div className="flex gap-1.5 p-1 bg-zinc-100 border border-zinc-200 rounded-xl mt-3">
-                 {["WALK_IN", "MONTHLY", "ONLINE"].map(m => (
-                   <button key={m} onClick={() => setOrderMode(m)} className={`flex-1 h-9 rounded-lg text-[10px] font-medium transition-colors ${orderMode === m ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>{m.replace('_', ' ')}</button>
-                 ))}
-               </div>
-            </div>
-          </div>
-          
-          <div className="p-4 border-t border-zinc-200 bg-white shrink-0 shadow-[0_-4px_15px_rgba(0,0,0,0.02)]">
-            <Button disabled={isProcessing || (balanceDue > 0 && !customerPhone)} onClick={createOrder} className="h-14 w-full rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-[15px] font-semibold text-white transition-all active:scale-[0.98] shadow-sm">
-              {isProcessing ? "Processing..." : balanceDue > 0 ? `Save — ${formatCurrency(balanceDue)} Due` : "Complete Order"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-      
-      {/* GLOBAL POS NUMPAD OVERLAY (z-index increased to float above everything) */}
+      {/* --- FLOATING NUMPAD OVERLAY (Takes Keyboard Inputs + Fixes Z-Index issues) --- */}
       {numpadConfig.isOpen && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-zinc-950/40 backdrop-blur-sm animate-in fade-in duration-200 print:hidden">
-          <div className="sm:max-w-[340px] w-[90vw] rounded-[24px] p-5 border border-zinc-200 bg-zinc-50/95 shadow-2xl animate-in zoom-in-95 duration-200">
+        <div 
+          className="fixed inset-0 z-[99999] flex items-center justify-center bg-zinc-950/60 backdrop-blur-sm animate-in fade-in duration-200 print:hidden outline-none select-none"
+          onKeyDown={(e) => {
+             // Block defaults for math keys so we don't scroll page
+             if (['Enter', 'Backspace', 'Delete', ' '].includes(e.key) || (e.key >= '0' && e.key <= '9')) {
+               e.preventDefault();
+             }
+             
+             setNumpadConfig(p => {
+               let newVal = p.value;
+               if (e.key >= '0' && e.key <= '9') {
+                 newVal = p.value + e.key;
+               } else if (e.key === '.') {
+                 if (p.allowDecimal && !p.value.includes('.')) newVal = p.value + e.key;
+               } else if (e.key === 'Backspace' || e.key === 'Delete') {
+                 newVal = p.value.slice(0, -1);
+               } else if (e.key === 'Enter') {
+                 setTimeout(() => p.onConfirm(p.value), 10); 
+                 return { ...p, isOpen: false };
+               } else if (e.key === 'Escape') {
+                 return { ...p, isOpen: false };
+               }
+               return { ...p, value: newVal };
+             });
+          }}
+          tabIndex={0} // Required so this div captures key strokes instantly
+          autoFocus 
+        >
+          <div className="sm:max-w-[340px] w-[90vw] rounded-[24px] p-5 border border-zinc-200 bg-zinc-50/95 shadow-2xl animate-in zoom-in-95 duration-200 pointer-events-auto">
             <div className="text-center text-sm font-semibold text-zinc-900 mb-4">{numpadConfig.title}</div>
             <div className="flex flex-col items-center">
               <div className="h-16 w-full bg-white border border-zinc-200/80 mb-5 flex items-center justify-center rounded-2xl shadow-sm">
@@ -1825,8 +1768,8 @@ export default function Billing() {
               <PosNumpad value={numpadConfig.value} onChange={(v) => setNumpadConfig(p => ({...p, value: v}))} allowDecimal={numpadConfig.allowDecimal} />
             </div>
             <div className="grid grid-cols-2 gap-2.5 w-full mt-5">
-              <Button variant="outline" className="h-12 rounded-xl border-zinc-200 bg-white font-semibold text-sm text-zinc-700 shadow-sm" onClick={() => setNumpadConfig(p => ({...p, isOpen: false}))}>Cancel</Button>
-              <Button className="h-12 rounded-xl bg-zinc-900 text-white font-semibold text-sm shadow-sm" onClick={() => { numpadConfig.onConfirm(numpadConfig.value); setNumpadConfig(p => ({...p, isOpen: false})); }}>Confirm</Button>
+              <Button variant="outline" className="h-12 rounded-xl border-zinc-200 bg-white font-semibold text-sm text-zinc-700 shadow-sm hover:bg-zinc-100" onClick={() => setNumpadConfig(p => ({...p, isOpen: false}))}>Cancel</Button>
+              <Button className="h-12 rounded-xl bg-zinc-900 text-white font-semibold text-sm shadow-sm hover:bg-zinc-800" onClick={() => { numpadConfig.onConfirm(numpadConfig.value); setNumpadConfig(p => ({...p, isOpen: false})); }}>Confirm</Button>
             </div>
           </div>
         </div>
@@ -1834,7 +1777,7 @@ export default function Billing() {
 
       {/* SMART WEIGHT KEYPAD DIALOG */}
       <Dialog open={weightDialogOpen} onOpenChange={setWeightDialogOpen}>
-        <DialogContent aria-describedby={undefined} className="sm:max-w-[360px] w-[95vw] rounded-2xl p-5 bg-zinc-50 border border-zinc-200 flex flex-col shadow-xl print:hidden">
+        <DialogContent aria-describedby={undefined} className="sm:max-w-[360px] w-[95vw] rounded-2xl p-5 bg-zinc-50 border border-zinc-200 flex flex-col shadow-xl print:hidden z-[9000]">
           <div className="shrink-0 flex flex-row items-center justify-between border-b border-zinc-200/80 pb-3 mb-3">
             <div>
                <h3 className="text-base font-semibold text-zinc-900">Select Weight</h3>
@@ -1891,7 +1834,7 @@ export default function Billing() {
 
       {/* SUCCESS MODAL WITH PRINT & WHATSAPP */}
       <Dialog open={showSuccessModal} onOpenChange={setShowSuccessModal}>
-        <DialogContent aria-describedby={undefined} className="sm:max-w-sm w-full rounded-[24px] p-5 text-center border border-zinc-200 bg-white shadow-2xl mt-auto sm:m-auto gap-0 max-h-[90dvh] overflow-y-auto print:hidden">
+        <DialogContent aria-describedby={undefined} className="sm:max-w-sm w-full rounded-[24px] p-5 text-center border border-zinc-200 bg-white shadow-2xl mt-auto sm:m-auto gap-0 max-h-[90dvh] overflow-y-auto print:hidden z-[9999]">
           <div className="mx-auto flex h-16 w-16 items-center justify-center bg-emerald-50 rounded-full border border-emerald-100 mb-4 mt-2">
             <CheckCircle2 className="h-8 w-8 text-emerald-500" />
           </div>

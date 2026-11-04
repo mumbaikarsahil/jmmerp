@@ -232,9 +232,9 @@ export const ThermalReceipt = ({
           .cf-icon { width: 16px; height: 16px; fill: black; }
           .cf-icon-outline { width: 16px; height: 16px; fill: none; stroke: black; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
-          .qr-section { margin-top: 24px; text-align: center; border-top: 1px dashed black; padding-top: 20px; padding-bottom: 10px; page-break-inside: avoid !important; }
-          .qr-image { width: 220px; height: 220px; margin: 0 auto; object-fit: contain; filter: grayscale(100%) contrast(1.2); }
-          .qr-text { font-size: 18px; font-weight: 900; margin-top: 8px; text-transform: uppercase; letter-spacing: 1px; }
+          .qr-section { margin-top: 30px; text-align: center; border-top: 1px dashed black; padding-top: 25px; padding-bottom: 15px; page-break-inside: avoid !important; }
+          .qr-image { width: 280px; height: 280px; margin: 0 auto; object-fit: contain; filter: grayscale(100%) contrast(1.2); }
+          .qr-text { font-size: 20px; font-weight: 900; margin-top: 12px; text-transform: uppercase; letter-spacing: 1px; }
         `}
       </style>
       

@@ -262,6 +262,13 @@ export default function Sales() {
 
   return (
     <AppLayout>
+      <style type="text/css" media="print">
+        {`
+          /* Aggressively hide any Radix UI popups (modals, overlays, dropdowns) during printing */
+          [data-radix-portal] { display: none !important; }
+          .print\\:hidden { display: none !important; }
+        `}
+      </style>
       <div className="w-full bg-zinc-50/50 min-h-screen">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6 animate-fade-in pb-24 md:pb-12 font-sans print:hidden">
           
@@ -291,7 +298,7 @@ export default function Sales() {
                       <span className="truncate">{dateRange.from ? (dateRange.to ? <>{format(dateRange.from, "LLL dd")} - {format(dateRange.to, "LLL dd, y")}</> : format(dateRange.from, "LLL dd, y")) : <span>{t('select_date') || "Select Date Range"}</span>}</span>
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0 rounded-2xl border-zinc-200 shadow-xl" align="end">
+                  <PopoverContent className="w-auto p-0 rounded-2xl border-zinc-200 shadow-xl print:hidden" align="end">
                     <Calendar mode="range" defaultMonth={dateRange.from} selected={dateRange} onSelect={(r: any) => setDateRange(r || { from: new Date() })} initialFocus numberOfMonths={1} className="rounded-2xl" />
                   </PopoverContent>
                 </Popover>
@@ -302,7 +309,7 @@ export default function Sales() {
                   <SelectTrigger className="flex-1 sm:w-[140px] h-11 border-zinc-200/80 bg-white text-zinc-800 font-medium text-sm shadow-sm rounded-xl outline-none focus:ring-1 focus:ring-zinc-900">
                     <Filter className="w-4 h-4 mr-1.5 text-zinc-400"/><SelectValue placeholder="Status" />
                   </SelectTrigger>
-                  <SelectContent className="rounded-xl border-zinc-200 shadow-lg">
+                  <SelectContent className="rounded-xl border-zinc-200 shadow-lg print:hidden">
                     <SelectItem value="ALL" className="font-medium text-sm">{t('all_records') || "All Status"}</SelectItem>
                     <SelectItem value="PAID" className="font-medium text-sm">{t('paid_in_full') || "Paid"}</SelectItem>
                     <SelectItem value="PARTIAL" className="font-medium text-sm">{t('advances') || "Advances"}</SelectItem>
@@ -314,7 +321,7 @@ export default function Sales() {
                   <SelectTrigger className="flex-1 sm:w-[140px] h-11 border-zinc-200/80 bg-white text-zinc-800 font-medium text-sm shadow-sm rounded-xl outline-none focus:ring-1 focus:ring-zinc-900">
                     <SelectValue placeholder="Type" />
                   </SelectTrigger>
-                  <SelectContent className="rounded-xl border-zinc-200 shadow-lg">
+                  <SelectContent className="rounded-xl border-zinc-200 shadow-lg print:hidden">
                     <SelectItem value="ALL" className="font-medium text-sm">{t('all_types') || "All Types"}</SelectItem>
                     <SelectItem value="WALK_IN" className="font-medium text-sm">{t('walk_in') || "Walk-In"}</SelectItem>
                     <SelectItem value="ONLINE" className="font-medium text-sm">{t('online') || "Online"}</SelectItem>
@@ -503,7 +510,7 @@ export default function Sales() {
 
       {/* --- CENTRAL BILLING FORMAT PREVIEW MODAL --- */}
       <Dialog open={!!previewOrder} onOpenChange={(open) => !open && setPreviewOrder(null)}>
-        <DialogContent aria-describedby={undefined} className="sm:max-w-md w-[95vw] rounded-2xl p-0 overflow-hidden bg-zinc-100 shadow-2xl border-zinc-200 flex flex-col max-h-[90dvh]">
+        <DialogContent aria-describedby={undefined} className="sm:max-w-md w-[95vw] rounded-2xl p-0 overflow-hidden bg-zinc-100 shadow-2xl border-zinc-200 flex flex-col max-h-[90dvh] print:hidden">
           <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-4 bg-white shrink-0 shadow-sm z-10">
             <div>
               <DialogTitle className="text-base font-semibold text-zinc-900">{t('receipt_preview') || "Receipt Preview"}</DialogTitle>
@@ -614,7 +621,7 @@ export default function Sales() {
 
       {/* VOID BILL CONFIRMATION MODAL */}
       <AlertDialog open={!!voidingOrder} onOpenChange={(open) => !open && setVoidingOrder(null)}>
-        <AlertDialogContent aria-describedby={undefined} className="rounded-2xl border-zinc-200 shadow-2xl p-0 overflow-hidden sm:max-w-sm">
+        <AlertDialogContent aria-describedby={undefined} className="rounded-2xl border-zinc-200 shadow-2xl p-0 overflow-hidden sm:max-w-sm print:hidden">
           <div className="p-6 bg-white">
             <div className="w-12 h-12 rounded-xl bg-rose-50 border border-rose-100 flex items-center justify-center mb-4 shadow-sm">
               <Trash2 className="h-5 w-5 text-rose-600" />

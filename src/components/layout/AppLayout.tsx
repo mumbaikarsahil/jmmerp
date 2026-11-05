@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { 
   LayoutDashboard, ShoppingCart, Package, Users, Settings, LogOut, 
   Menu, X, TrendingUp, FlaskConical, Bell, Globe, ShieldAlert, ShieldCheck,
-  PanelLeftClose, PanelLeft, Printer
+  PanelLeftClose, PanelLeft, Printer, 
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
@@ -102,7 +102,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     { name: t('sales'), href: "/sales", icon: TrendingUp, roles: ['admin', 'manager'] },
     { name: 'Udhaar Book', href: "/udhaar", icon: Users, roles: ['admin', 'manager', 'sales'] },
     { name: t('settings'), href: "/settings", icon: Settings, roles: ['admin', 'manager'] },
-    { name: 'Print Settings', href: "/receipt-settings", icon: Printer, roles: ['admin', 'manager'] },
+    { name: 'Print Settings', href: "/receipt-settings", icon: Printer, roles: ['admin', 'manager']
+     },
+     { name: 'Shipping Label ', href: "/shipping-label", icon: ShoppingCart, roles: ['admin', 'manager']
+     },
     { name: 'Staff Access', href: "/manage-users", icon: ShieldCheck, roles: ['admin'] },
   ];
 

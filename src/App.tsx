@@ -28,6 +28,7 @@ import Production from "./pages/production/Production";
 import MixMasala from "./pages/mixmasala/MixMasala";
 import ManageUsers from "@/pages/admin/ManageUsers"; // Added Staff Management
 import ReceiptSettings from "@/pages/settings/ReceiptSettings";
+import ShippingLabel from "./pages/shipping/ShippingLabel";
 
 const queryClient = new QueryClient();
 
@@ -158,6 +159,12 @@ const AppRoutes = () => {
         </ProtectedRoute>
       } />
 
+
+<Route path="/shipping-label" element={
+  <ProtectedRoute>
+    <ShippingLabel />
+  </ProtectedRoute>
+} />
       {/* NEW: ADMIN STAFF MANAGEMENT */}
       <Route path="/manage-users" element={
         <ProtectedRoute>

@@ -163,7 +163,6 @@ const POS_CATEGORY_COLORS = [
 
 const PosCategoryBar = ({ selectedCategory, setSelectedCategory, quickCategories }: any) => {
   return (
-    // Make this section scroll horizontally on mobile to save vertical space
     <div className="flex flex-row md:flex-wrap gap-2 items-center overflow-x-auto scrollbar-none pb-1">
       <button 
         onClick={() => setSelectedCategory("ALL")} 
@@ -222,8 +221,12 @@ export default function Billing() {
 
   const [selectedCategory, setSelectedCategory] = useState("ALL");
   const [searchTerm, setSearchTerm] = useState("");
+  
+  // VOICE STATE
   const [isListening, setIsListening] = useState(false);
   const [isSmartListening, setIsSmartListening] = useState(false);
+  const [liveTranscript, setLiveTranscript] = useState("");
+
   const [quickCategories, setQuickCategories] = useState<string[]>([]);
   const [quickQuantity, setQuickQuantity] = useState("1");
   
@@ -431,7 +434,6 @@ export default function Billing() {
     }
   }, [materialCost, calculatedServicesCharge, showCustomMasala]);
 
-
   useEffect(() => {
     const initialize = async () => {
       const { data: { session } } = await supabase.auth.getSession();
@@ -522,6 +524,7 @@ export default function Billing() {
     else setFoundCustomer(null);
   };
 
+  // --- TRADITIONAL SEARCH VOICE LOGIC ---
   const startVoiceSearch = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) return toast({title: "Not supported", description: "Browser does not support voice search.", variant: "destructive"});
@@ -533,48 +536,87 @@ export default function Billing() {
     recognition.start();
   };
 
-  // --- SMART VOICE BILLING LOGIC ---
+  // --- SMART GOOGLE-STYLE VOICE BILLING LOGIC ---
   const startSmartVoiceBill = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) return toast({title: "Not supported", description: "Browser does not support voice search.", variant: "destructive"});
     
     const recognition = new SpeechRecognition();
     recognition.lang = 'mr-IN';
-    recognition.interimResults = false;
+    recognition.interimResults = true; // Enables live text streaming
     
-    recognition.onstart = () => setIsSmartListening(true);
-    recognition.onend = () => setIsSmartListening(false);
+    recognition.onstart = () => {
+      setIsSmartListening(true);
+      setLiveTranscript("Listening...");
+    };
+    
+    recognition.onend = () => {
+      setIsSmartListening(false);
+    };
     
     recognition.onresult = (e: any) => {
-      const transcript = e.results[0][0].transcript.toLowerCase();
-      handleSmartVoiceCommand(transcript);
+      let interimTranscript = "";
+      let finalTranscript = "";
+      
+      for (let i = e.resultIndex; i < e.results.length; ++i) {
+        if (e.results[i].isFinal) {
+          finalTranscript += e.results[i][0].transcript;
+        } else {
+          interimTranscript += e.results[i][0].transcript;
+        }
+      }
+      
+      if (interimTranscript) {
+        setLiveTranscript(interimTranscript);
+      }
+      
+      if (finalTranscript) {
+        setLiveTranscript(finalTranscript);
+        handleSmartVoiceCommand(finalTranscript.toLowerCase());
+        setIsSmartListening(false); // Close modal on final result
+      }
     };
+    
     recognition.start();
   };
 
   const handleSmartVoiceCommand = (transcript: string) => {
-    let text = transcript;
+    let text = transcript.toLowerCase();
     let price: number | null = null;
     let qty = 1;
     let isWeighted = false;
 
+    // Advanced mapping for Marathi/Hindi numbers and keywords
     const mappings: Record<string, string> = {
-        'अडीचशे': '250', 'adishe': '250', 'पावशे': '250', 'pawshe': '250', 'शंभर': '100', 'shambhar': '100',
-        'अर्धा किलो': '500 gram', 'ardha kilo': '500 gram', 'दीड': '1.5', 'dedh': '1.5', 'अडीच': '2.5',
-        'रुपये': 'rupees', 'रु': 'rupees', 'rs': 'rupees', 'rupay': 'rupees', 'किलो': 'kg', 'kilo': 'kg',
-        'ग्रॅम': 'gram', 'g': 'gram', 'gm': 'gram'
+        'एक': '1', 'ek': '1',
+        'दोन': '2', 'don': '2',
+        'तीन': '3', 'teen': '3', 'tin': '3',
+        'चार': '4', 'char': '4',
+        'पाच': '5', 'pach': '5',
+        'सहा': '6', 'saha': '6',
+        'सात': '7', 'saat': '7',
+        'आठ': '8', 'aath': '8',
+        'नऊ': '9', 'nau': '9',
+        'दहा': '10', 'daha': '10',
+        'अडीचशे': '250', 'adishe': '250', 'पावशे': '250', 'pawshe': '250',
+        'शंभर': '100', 'shambhar': '100', 'अर्धा किलो': '500 gram', 'ardha kilo': '500 gram',
+        'दीड': '1.5', 'dedh': '1.5', 'अडीच': '2.5', 'रुपये': 'rupees', 'रु': 'rupees',
+        'rs': 'rupees', 'rupay': 'rupees', 'किलो': 'kg', 'kilo': 'kg', 'ग्रॅम': 'gram', 'g': 'gram', 'gm': 'gram'
     };
 
+    // Replace words with exact matches
     for (const [word, replacement] of Object.entries(mappings)) {
-        text = text.replace(new RegExp(word, 'g'), replacement);
+        text = text.replace(new RegExp(`\\b${word}\\b`, 'gu'), replacement);
     }
 
+    // Extract Explicit Price
     const priceMatch = text.match(/(\d+)\s*rupees/);
     if (priceMatch) {
         price = Number(priceMatch[1]);
         text = text.replace(priceMatch[0], '');
     }
 
+    // Extract Quantities (KG/Gram)
     const qtyMatch = text.match(/(\d+|\d+\.\d+)\s*(kg|gram|grams)/);
     if (qtyMatch) {
         isWeighted = true;
@@ -587,15 +629,32 @@ export default function Billing() {
             qty = rawVal;
         }
         text = text.replace(qtyMatch[0], '');
+    } else {
+       // Look for naked numbers for quantity (e.g., "1 agri koli")
+       const nakedNumMatch = text.match(/\b(\d+|\d+\.\d+)\b/);
+       if (nakedNumMatch && !price) {
+          qty = Number(nakedNumMatch[1]);
+          text = text.replace(nakedNumMatch[0], '');
+       }
     }
 
     const itemName = text.trim();
     if (!itemName) return toast({ title: "Voice Recognition Failed", description: "Could not detect item name.", variant: "destructive" });
 
-    const match = allItems.find(i => 
-       getSafeItemName(i).toLowerCase().includes(itemName) || 
-       (i as any).english_name?.toLowerCase().includes(itemName)
-    );
+    // Smarter Fuzzy Search avoiding unnecessary new items
+    const match = allItems.find(i => {
+       const n = getSafeItemName(i).toLowerCase();
+       const e = (i as any).english_name?.toLowerCase() || '';
+       
+       // Direct sub-string match for longer words
+       if (itemName.length > 3 && (n.includes(itemName) || e.includes(itemName))) return true;
+       
+       // Split spoken words and ensure ALL spoken words exist in the database name
+       const spokenWords = itemName.split(/\s+/).filter(w => w.length > 2);
+       if (spokenWords.length > 0 && spokenWords.every(w => n.includes(w) || e.includes(w))) return true;
+       
+       return false;
+    });
 
     if (match) {
         let finalQty = qty;
@@ -604,25 +663,13 @@ export default function Billing() {
 
         let finalPrice = Number(match.selling_price || 0);
         if (price !== null) {
-            finalPrice = price / finalQty; 
+            finalPrice = price / (finalQty || 1); 
         }
 
         addItemToCart(match, finalQty, finalPrice);
-        toast({ title: "Voice Added", description: `${match.item_name} added via voice.` });
+        toast({ title: "Added via Voice", description: `${match.item_name} added.` });
     } else {
-        const tempItem = {
-            id: `custom-${Date.now()}`,
-            item_name: itemName.charAt(0).toUpperCase() + itemName.slice(1),
-            item_type: isWeighted ? "RAW_MATERIAL" : "PACKAGED_PRODUCT",
-            base_unit: isWeighted ? "kg" : "piece",
-            selling_price: price ? (price / qty) : 0,
-            quantity: 0,
-            track_inventory: false,
-            is_sellable: true
-        } as unknown as Item;
-
-        addItemToCart(tempItem, qty, tempItem.selling_price);
-        toast({ title: "Custom Item Created", description: `Added unknown item '${itemName}' to ledger.` });
+        toast({ title: "Item Not Found", description: `Could not find an exact match for '${itemName}'. Try searching manually.`, variant: "destructive" });
     }
   };
 
@@ -899,10 +946,29 @@ export default function Billing() {
     return created;
   };
 
+  const handleCheckoutSubmit = () => {
+    if (balanceDue > 0 && !customerPhone) {
+      toast({ 
+        title: "Phone Number Required", 
+        description: "Please enter a customer phone number to save an Udhaar / Pending bill.", 
+        variant: "destructive" 
+      });
+      return;
+    }
+    if (isDelivery && !customerAddress) {
+      toast({ 
+        title: "Address Required", 
+        description: "Please enter a delivery address.", 
+        variant: "destructive" 
+      });
+      return;
+    }
+    createOrder();
+  };
+
   const createOrder = async () => {
     if (!currentTenantId || cart.length === 0) return;
     if (!orderNumber.trim()) return toast({ title: "Order number missing", variant: "destructive" });
-    if (isDelivery && !customerAddress) return toast({ title: "Delivery address missing", variant: "destructive" });
 
     setIsProcessing(true);
     try {
@@ -1160,6 +1226,24 @@ export default function Billing() {
 
   return (
     <AppLayout>
+      {/* GOOGLE STYLE LIVE VOICE OVERLAY */}
+      {isSmartListening && (
+        <div className="fixed inset-0 z-[99999] flex flex-col items-center justify-end bg-black/60 backdrop-blur-sm p-6 animate-in fade-in duration-200 print:hidden">
+          <div className="w-full max-w-md bg-white rounded-[32px] p-8 flex flex-col items-center shadow-2xl animate-in slide-in-from-bottom-10 duration-300">
+            <div className="w-24 h-24 bg-indigo-50 rounded-full flex items-center justify-center mb-6 shadow-[0_0_0_15px_rgba(99,102,241,0.1)] animate-pulse">
+              <Mic className="w-10 h-10 text-indigo-600" />
+            </div>
+            <p className="text-zinc-500 font-semibold text-xs uppercase tracking-widest mb-3">Speak Now</p>
+            <p className="text-2xl font-bold text-zinc-900 text-center min-h-[70px] leading-tight">
+              {liveTranscript}
+            </p>
+            <Button variant="ghost" onClick={() => { setIsSmartListening(false); setLiveTranscript(""); }} className="mt-6 text-zinc-500 rounded-full font-semibold hover:bg-zinc-100 h-12 px-8">
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
       {showCustomMasala ? (
         <div className="flex flex-col h-[calc(100dvh-4rem)] bg-zinc-50/50 print:hidden">
           
@@ -1350,13 +1434,13 @@ export default function Billing() {
                       placeholder="Search products..."
                       className="h-11 text-sm rounded-xl border-zinc-200 bg-white shadow-sm pl-10 pr-11 font-medium focus-visible:ring-1 focus-visible:ring-zinc-900 transition-all"
                     />
-                    <button onClick={startVoiceSearch} className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg transition-colors ${isListening ? 'bg-rose-100 text-rose-600 animate-pulse' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}>
+                    <button onClick={() => { setSearchTerm(""); if (!isListening) startVoiceSearch(); }} className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg transition-colors ${isListening ? 'bg-rose-100 text-rose-600 animate-pulse' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}>
                        <Mic className="h-4.5 w-4.5" />
                     </button>
                   </div>
 
                   {/* SMART VOICE BILLING BUTTON */}
-                  <Button onClick={startSmartVoiceBill} className={`h-11 px-4 rounded-xl shadow-sm transition-all ${isSmartListening ? 'bg-rose-500 hover:bg-rose-600 text-white animate-pulse' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}>
+                  <Button onClick={startSmartVoiceBill} className={`h-11 px-4 rounded-xl shadow-sm transition-all bg-indigo-600 hover:bg-indigo-700 text-white`}>
                       <Mic className="h-4.5 w-4.5 sm:mr-1.5" />
                       <span className="hidden sm:inline">Voice Bill</span>
                   </Button>
@@ -1494,7 +1578,7 @@ export default function Billing() {
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-3 space-y-3">
+          <div className="flex-1 overflow-y-auto p-3 space-y-3 pb-32">
             {/* 1. CART ITEMS REVIEW */}
             <div className="bg-white p-4 border border-zinc-200 rounded-2xl shadow-sm">
               <div className="flex justify-between items-center mb-3 pb-2 border-b border-zinc-100">
@@ -1684,8 +1768,8 @@ export default function Billing() {
             </div>
           </div>
           
-          <div className="p-4 border-t border-zinc-200 bg-white shrink-0 shadow-[0_-4px_15px_rgba(0,0,0,0.05)] w-full mx-auto fixed bottom-0 left-0 right-0 max-w-4xl">
-            <Button disabled={isProcessing || (balanceDue > 0 && !customerPhone) || (isDelivery && !customerAddress)} onClick={createOrder} className="h-14 w-full rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-[15px] font-semibold text-white transition-all active:scale-[0.98] shadow-md">
+          <div className="p-4 border-t border-zinc-200 bg-white shrink-0 shadow-[0_-4px_15px_rgba(0,0,0,0.05)] w-full pb-safe">
+            <Button disabled={isProcessing} onClick={handleCheckoutSubmit} className="h-14 w-full rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-[15px] font-semibold text-white transition-all active:scale-[0.98] shadow-md">
               {isProcessing ? "Processing..." : balanceDue > 0 ? `Save — ${formatCurrency(balanceDue)} Due` : "Complete Order"}
             </Button>
           </div>
@@ -1900,7 +1984,7 @@ export default function Billing() {
           </div>
           
           <div className="p-4 sm:p-6 border-t border-zinc-200 bg-white shrink-0 shadow-[0_-4px_15px_rgba(0,0,0,0.05)]">
-            <Button disabled={isProcessing || (balanceDue > 0 && !customerPhone) || (isDelivery && !customerAddress)} onClick={createOrder} className="h-16 w-full rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-lg font-semibold text-white transition-all active:scale-[0.98] shadow-md">
+            <Button disabled={isProcessing} onClick={handleCheckoutSubmit} className="h-16 w-full rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-lg font-semibold text-white transition-all active:scale-[0.98] shadow-md">
               {isProcessing ? "Processing..." : balanceDue > 0 ? `Save — ${formatCurrency(balanceDue)} Due` : "Complete Order"}
             </Button>
           </div>

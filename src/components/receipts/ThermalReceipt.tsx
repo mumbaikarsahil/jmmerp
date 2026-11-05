@@ -127,61 +127,60 @@ export const ThermalReceipt = ({
     <div id="printable-receipt" className="hidden print:block">
       <style type="text/css" media="print">
         {`
-          /* FORCED CSS FOR ANDROID / CHROME PRINT SPOOLER */
           @page { 
-            margin: 0 !important;
-            padding: 0 !important;
+            margin: 0; 
           }
           
          @media print {
-            #root, [data-radix-portal] { display: none !important; }
+            /* 1. AGGRESSIVELY HIDE THE ENTIRE APP UI AND ANY OPEN MODALS */
+            #root, [data-radix-portal] { 
+              display: none !important; 
+            }
             
+            /* 2. FORCE BACKGROUND TO WHITE */
             html, body { 
               background: #ffffff !important; 
               margin: 0 !important; 
               padding: 0 !important; 
-              width: ${printerSize === "110mm" ? "106mm" : "78mm"} !important;
-              height: auto !important; /* CRITICAL: Allows continuous roll to adapt to content */
-              min-height: auto !important; /* Removes the 100vh restriction causing black boxes */
-              overflow: visible !important;
               -webkit-print-color-adjust: exact !important; 
               print-color-adjust: exact !important; 
             }
 
             .thermal-print-section {
-              position: relative !important;
+              position: absolute !important;
               top: 0 !important;
               left: 0 !important;
+              /* DYNAMIC WIDTH INJECTION */
               width: ${printerSize === "110mm" ? "106mm" : "78mm"} !important; 
-              max-width: 100% !important;
-              height: auto !important;
-              min-height: auto !important;
-              margin: 0 auto !important;
-              padding: 0 4mm 10mm 4mm !important; 
+              max-width: 100vw !important;
+              min-height: 100vh !important;
               background: #ffffff !important;
+              z-index: 2147483647 !important;
+              margin: 0 auto !important;
+              padding: 4mm 3mm 10mm 3mm !important; 
+              visibility: visible !important;
+              display: block !important;
               color: #000000 !important;
               font-family: monospace, sans-serif !important;
-              display: block !important;
-              overflow: visible !important;
             }
 
-            .thermal-print-section * { 
-              visibility: visible !important; 
-              color: #000000 !important; 
-            }
-            
-            table, tr, td, th, .custom-header, .receipt-footer, .qr-section {
-              page-break-inside: avoid !important;
-              break-inside: avoid !important;
-            }
+            .thermal-print-section * { visibility: visible !important; color: #000000 !important; }
           }
 
+          /* ESTIMATE BANNER */
           .estimate-banner {
-            text-align: center; font-weight: 900; font-size: 20px; text-transform: uppercase;
-            border-bottom: 2px dashed black; padding-bottom: 6px; margin-bottom: 12px;
-            letter-spacing: 1px; background: #f0f0f0;
+            text-align: center;
+            font-weight: 900;
+            font-size: 20px;
+            text-transform: uppercase;
+            border-bottom: 2px dashed black;
+            padding-bottom: 6px;
+            margin-bottom: 12px;
+            letter-spacing: 1px;
+            background: #f0f0f0;
           }
 
+          /* HTML CUSTOM MASALA HEADER */
           .custom-header { text-align: center; margin-bottom: 12px; border-bottom: 1px dashed black; padding-bottom: 10px; }
           .ch-top { display: flex; justify-content: space-between; align-items: flex-start; font-weight: 900; font-size: 15px; margin-bottom: 4px; }
           .ch-logo { height: 90px; object-fit: contain; margin: 6px auto; filter: grayscale(100%) contrast(1.2); }
@@ -190,6 +189,7 @@ export const ThermalReceipt = ({
           .gst-band { background: black !important; color: white !important; padding: 5px 2px; margin-top: 10px; font-size: 13px; font-weight: bold; border-radius: 4px; display: flex; justify-content: space-around; align-items: center; }
           .gst-band * { color: white !important; }
 
+          /* TEXT ONLY HEADER (Normal Bills) */
           .text-header { text-align: center; margin-bottom: 12px; border-bottom: 1px dashed black; padding-bottom: 10px; }
           .text-header h1 { font-size: 24px; font-weight: 900; margin: 0 0 5px 0; }
           .text-header p { font-size: 14px; font-weight: bold; margin: 2px 0; }
@@ -198,7 +198,9 @@ export const ThermalReceipt = ({
           .meta-header span { white-space: nowrap; }
           .customer-info { font-weight: bold; font-size: 15px; margin-bottom: 10px; line-height: 1.4; display: flex; flex-direction: column; }
           
+          /* DOTTED THERMAL TABLE */
           table { width: 100%; border-collapse: collapse; margin-top: 5px; margin-bottom: 10px; table-layout: fixed; }
+          tr { page-break-inside: avoid !important; break-inside: avoid-page !important; }
           
           .thermal-header-row { border-top: 1px dashed black; border-bottom: 1px dashed black; }
           .thermal-header-row th { padding: 6px 0; font-weight: 900; font-size: 15px; }
@@ -214,11 +216,12 @@ export const ThermalReceipt = ({
           .totals-row td { border-top: 1px dashed black; padding-top: 6px; padding-bottom: 6px; font-weight: 900; }
           .payment-breakdown td { border-top: none; font-weight: normal; font-size: 14px; padding: 2px 0; }
           
-          .receipt-footer { margin-top: 15px; text-align: center; font-size: 14px; border-top: 1px dashed black; padding-top: 10px; }
+          .receipt-footer { margin-top: 15px; text-align: center; font-size: 14px; border-top: 1px dashed black; padding-top: 10px; page-break-inside: avoid !important; }
           .receipt-footer .thank-you { font-weight: bold; margin-bottom: 2px; }
           .receipt-footer .notes { margin-top: 8px; font-weight: bold; font-size: 14px; border: 1px dashed black; padding: 6px; display: inline-block; word-break: break-word; max-width: 100%; }
 
-          .custom-footer { margin-top: 15px; display: flex; flex-direction: column; align-items: center; }
+          /* HTML CUSTOM MASALA FOOTER & QR CODE */
+          .custom-footer { margin-top: 15px; display: flex; flex-direction: column; align-items: center; page-break-inside: avoid !important; }
           .cf-band { background: black !important; color: white !important; border-radius: 20px; padding: 6px 12px; font-weight: bold; font-size: 15px; margin-bottom: 10px; width: 100%; text-align: center; }
           .cf-band * { color: white !important; }
           .cf-website { font-size: 16px; font-weight: bold; margin-bottom: 8px; }
@@ -227,7 +230,7 @@ export const ThermalReceipt = ({
           .cf-icon { width: 16px; height: 16px; fill: black; }
           .cf-icon-outline { width: 16px; height: 16px; fill: none; stroke: black; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
-          .qr-section { margin-top: 30px; text-align: center; border-top: 1px dashed black; padding-top: 25px; padding-bottom: 15px; }
+          .qr-section { margin-top: 30px; text-align: center; border-top: 1px dashed black; padding-top: 25px; padding-bottom: 15px; page-break-inside: avoid !important; }
           .qr-image { width: 280px; height: 280px; margin: 0 auto; object-fit: contain; filter: grayscale(100%) contrast(1.2); }
           .qr-text { font-size: 20px; font-weight: 900; margin-top: 12px; text-transform: uppercase; letter-spacing: 1px; }
         `}
@@ -235,12 +238,14 @@ export const ThermalReceipt = ({
       
       <div className="thermal-print-section">
         
+        {/* ESTIMATE BANNER (Only renders if demo print) */}
         {isDemoEstimate && (
           <div className="estimate-banner">
             ESTIMATE / QUOTATION
           </div>
         )}
 
+        {/* CONDITIONAL HEADER */}
         {isCustomMasalaBill ? (
           <div className="custom-header">
             <div className="ch-top">
@@ -324,6 +329,7 @@ export const ThermalReceipt = ({
               </tr>
             ))}
 
+            {/* DELIVERY FEE LINE */}
             {deliveryCharge > 0 && (
               <tr className="totals-row">
                 <td className="td-item" colSpan={2}>Delivery Fee</td>
@@ -338,6 +344,7 @@ export const ThermalReceipt = ({
               <td className="td-paise">00</td>
             </tr>
 
+            {/* HIDE ADVANCE & DUE IF THIS IS JUST AN ESTIMATE */}
             {!isDemoEstimate && (
               <>
                 <tr>
@@ -370,6 +377,7 @@ export const ThermalReceipt = ({
             {isDemoEstimate ? "This is an estimate only." : "Thank you for shopping! Visit again."}
           </div>
           
+          {/* CONDITIONAL PURE HTML FOOTER */}
           {isCustomMasalaBill && !isDemoEstimate && (
             <div className="custom-footer">
               <div className="cf-band">
@@ -379,6 +387,7 @@ export const ThermalReceipt = ({
               <div className="cf-socials">
                 <span>Follow us on :</span>
                 
+                {/* Facebook Icon */}
                 <div className="cf-social-item">
                   <svg viewBox="0 0 24 24" className="cf-icon">
                     <path d="M22 12c0-5.52-4.48-10-10-10S2 6.48 2 12c0 4.84 3.44 8.87 8 9.8V15H8v-3h2V9.5C10 7.57 11.57 6 13.5 6H16v3h-2c-1.1 0-2 .9-2 2v1h4l-1 3h-3v6.8c4.56-.93 8-4.96 8-9.8z"/>
@@ -386,6 +395,7 @@ export const ThermalReceipt = ({
                   <span>jay_maharashtra_masale_jmm</span>
                 </div>
                 
+                {/* Instagram Icon */}
                 <div className="cf-social-item">
                   <svg viewBox="0 0 24 24" className="cf-icon-outline">
                     <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>
@@ -398,6 +408,7 @@ export const ThermalReceipt = ({
             </div>
           )}
           
+          {/* UPI QR CODE FOR ACTUAL BILLS */}
           {!isDemoEstimate && balanceDue > 0 && (
             <div className="qr-section">
               <img src="/paymentqr.jpg" alt="Scan to Pay via UPI" className="qr-image" />

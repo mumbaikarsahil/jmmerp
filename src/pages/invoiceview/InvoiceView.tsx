@@ -10,6 +10,33 @@ import {
   Download
 } from "lucide-react";
 
+// Helper Functions exactly matched with ThermalReceipt
+const normalizeUnitStr = (str: string) => String(str || "").toLowerCase().trim();
+
+const formatCartWeight = (qty: number, unit: string) => {
+  const safeUnit = normalizeUnitStr(unit);
+  if (safeUnit === 'piece' || safeUnit === 'nug' || safeUnit === 'pcs' || safeUnit === 'pc') {
+    return `${qty} pc`;
+  }
+  // Standardize kg vs g formatting based on the raw number
+  if (safeUnit === 'kg' && qty < 1) {
+    return `${Math.round(qty * 1000)} g`;
+  }
+  if (safeUnit === 'g' && qty >= 1000) {
+    return `${(qty / 1000).toFixed(2)} kg`;
+  }
+  return `${qty} ${safeUnit}`;
+};
+
+const getNormalizedQtyForCost = (qty: number, displayUnit: string, dbBaseUnit: string) => {
+  const u = normalizeUnitStr(displayUnit); 
+  const bu = normalizeUnitStr(dbBaseUnit);
+  if (['g', 'gm', 'gram', 'grams', 'ग्रॅम', 'ग्राम'].includes(u)) return qty / 1000;
+  if (u === 'piece' || u === 'nug' || u === 'pcs' || bu === 'piece') return qty;
+  if (qty >= 10 && (bu.includes('kg') || !bu)) return qty / 1000;
+  return qty;
+};
+
 export default function InvoiceView() {
   const { id } = useParams();
   const [order, setOrder] = useState<any>(null);
@@ -46,10 +73,10 @@ export default function InvoiceView() {
         .from("order_items")
         .select(`
           *,
-          items ( item_name, base_unit, item_type ),
+          items ( item_name, base_unit, item_type, selling_price, size ),
           order_item_ingredients (
             custom_quantity, unit,
-            items ( item_name )
+            items ( item_name, selling_price, base_unit )
           )
         `)
         .eq("order_id", currentOrder.id);
@@ -100,8 +127,25 @@ export default function InvoiceView() {
   const labourItems = items.filter(i => i.items?.item_type === 'SERVICE' || i.items?.item_name?.includes('Labour') || i.items?.item_name?.includes('मजूरी'));
   const physicalItems = items.filter(i => i.items?.item_type !== 'SERVICE' && !i.items?.item_name?.includes('Labour') && !i.items?.item_name?.includes('मजूरी'));
 
-  const totalLabourCharge = labourItems.reduce((sum, item) => sum + safeNumber(item.price_at_order), 0);
-  const totalMaterialCost = physicalItems.reduce((sum, item) => sum + safeNumber(item.price_at_order), 0);
+  const totalLabourCharge = labourItems.reduce((sum, item) => sum + Math.abs(safeNumber(item.quantity) * safeNumber(item.price_at_order)), 0);
+  
+  // Accurately calculate Material Cost by multiplying Price * Qty exactly like POS Numpad
+  const totalMaterialCost = physicalItems.reduce((sum, item) => {
+    let lineTotal = 0;
+    if (item.order_item_ingredients && item.order_item_ingredients.length > 0) {
+      // Calculate Mix Masala Custom Cost
+      item.order_item_ingredients.forEach((ing: any) => {
+        const rawPrice = safeNumber(ing.items?.selling_price);
+        const normalizedQty = getNormalizedQtyForCost(ing.custom_quantity, ing.unit, ing.items?.base_unit || 'kg');
+        lineTotal += (normalizedQty * rawPrice);
+      });
+    } else {
+      // Calculate Standard Item Cost
+      lineTotal = Math.abs(safeNumber(item.quantity) * safeNumber(item.price_at_order));
+    }
+    return sum + lineTotal;
+  }, 0);
+  
   const deliveryCharge = safeNumber(order.delivery_charge);
 
   // Store details (With JMM Defaults if missing)
@@ -127,7 +171,7 @@ export default function InvoiceView() {
             body { background-color: white !important; margin: 0; padding: 0; }
             .no-print { display: none !important; }
             .print-exact { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-            .invoice-container { box-shadow: none !important; margin: 0 !important; width: 100% !important; max-width: 100% !important; }
+            .invoice-container { box-shadow: none !important; margin: 0 !important; width: 100% !important; max-width: 100% !important; border: 0 !important; }
           }
         `} 
       </style>
@@ -141,12 +185,12 @@ export default function InvoiceView() {
             className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-md transition-transform active:scale-95"
           >
             <Printer size={18} />
-            Download Bill
+            Print / PDF
           </button>
         </div>
 
         {/* --- MAIN INVOICE PAPER --- */}
-        <div className="w-full max-w-[800px] bg-white shadow-xl invoice-container border border-zinc-300 relative overflow-hidden">
+        <div className="w-full max-w-[800px] bg-white shadow-xl invoice-container border border-zinc-300 relative overflow-hidden rounded-xl sm:rounded-none">
           
           {/* Top Border Accent */}
           <div className="h-3 w-full bg-orange-600 print-exact"></div>
@@ -210,31 +254,45 @@ export default function InvoiceView() {
               <tbody>
                 {physicalItems.map((item, idx) => {
                   const hasCustomIngredients = item.order_item_ingredients && item.order_item_ingredients.length > 0;
+                  const itemSize = item.items?.size ? ` (${item.items.size})` : '';
                   
                   return (
                     <React.Fragment key={idx}>
-                      <tr className="border-b border-black">
-                        <td className="border-r-2 border-black px-3 py-2">
-                          <span className="text-black">{item.items?.item_name || "Unknown Item"}</span>
-                          {/* If it's a mix masala, show ingredients indented */}
-                          {hasCustomIngredients && (
-                            <div className="mt-1.5 pl-3 space-y-0.5">
-                              {item.order_item_ingredients.map((ing: any, i: number) => (
-                                <div key={i} className="text-xs text-zinc-600 font-semibold flex justify-between pr-4">
-                                  <span>• {ing.items?.item_name}</span>
-                                  <span>{ing.custom_quantity} {ing.unit}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </td>
-                        <td className="border-r-2 border-black px-3 py-2 text-center align-top">
-                          {item.quantity} {item.items?.base_unit || 'unit'}
-                        </td>
-                        <td className="px-3 py-2 text-right align-top">
-                          {safeNumber(item.price_at_order).toFixed(0)}
-                        </td>
-                      </tr>
+                      {hasCustomIngredients ? (
+                         item.order_item_ingredients.map((ing: any, i: number) => {
+                           if (ing.custom_quantity <= 0) return null;
+                           
+                           const rawPrice = safeNumber(ing.items?.selling_price);
+                           const normalizedQty = getNormalizedQtyForCost(ing.custom_quantity, ing.unit, ing.items?.base_unit || 'kg');
+                           const lineCost = normalizedQty * rawPrice;
+                           
+                           return (
+                             <tr key={`${idx}-${i}`} className="border-b border-black">
+                               <td className="border-r-2 border-black px-3 py-2">
+                                 <span className="text-black">{ing.items?.item_name || "Spice"}</span>
+                               </td>
+                               <td className="border-r-2 border-black px-3 py-2 text-center align-middle whitespace-nowrap">
+                                 {formatCartWeight(ing.custom_quantity, ing.unit)}
+                               </td>
+                               <td className="px-3 py-2 text-right align-middle">
+                                 {Math.round(lineCost)}
+                               </td>
+                             </tr>
+                           )
+                         })
+                      ) : (
+                        <tr className="border-b border-black">
+                          <td className="border-r-2 border-black px-3 py-2">
+                            <span className="text-black">{item.items?.item_name || "Unknown Item"}{itemSize}</span>
+                          </td>
+                          <td className="border-r-2 border-black px-3 py-2 text-center align-middle whitespace-nowrap">
+                            {formatCartWeight(Math.abs(item.quantity), item.items?.base_unit || 'pc')}
+                          </td>
+                          <td className="px-3 py-2 text-right align-middle">
+                            {Math.floor(Math.abs(item.quantity * safeNumber(item.price_at_order)))}
+                          </td>
+                        </tr>
+                      )}
                     </React.Fragment>
                   );
                 })}

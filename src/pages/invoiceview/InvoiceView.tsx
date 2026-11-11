@@ -2,39 +2,50 @@ import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import {
-  MapPin,
-  Loader2,
-  Printer,
-  Phone,
-  CheckCircle2,
-  Download
+  MapPin, Loader2, Printer, Phone, CheckCircle2, Download
 } from "lucide-react";
 
-// Helper Functions exactly matched with ThermalReceipt
 const normalizeUnitStr = (str: string) => String(str || "").toLowerCase().trim();
-
-const formatCartWeight = (qty: number, unit: string) => {
-  const safeUnit = normalizeUnitStr(unit);
-  if (safeUnit === 'piece' || safeUnit === 'nug' || safeUnit === 'pcs' || safeUnit === 'pc') {
-    return `${qty} pc`;
-  }
-  // Standardize kg vs g formatting based on the raw number
-  if (safeUnit === 'kg' && qty < 1) {
-    return `${Math.round(qty * 1000)} g`;
-  }
-  if (safeUnit === 'g' && qty >= 1000) {
-    return `${(qty / 1000).toFixed(2)} kg`;
-  }
-  return `${qty} ${safeUnit}`;
-};
 
 const getNormalizedQtyForCost = (qty: number, displayUnit: string, dbBaseUnit: string) => {
   const u = normalizeUnitStr(displayUnit); 
   const bu = normalizeUnitStr(dbBaseUnit);
-  if (['g', 'gm', 'gram', 'grams', 'ग्रॅम', 'ग्राम'].includes(u)) return qty / 1000;
-  if (u === 'piece' || u === 'nug' || u === 'pcs' || bu === 'piece') return qty;
-  if (qty >= 10 && (bu.includes('kg') || !bu)) return qty / 1000;
+  if (['piece', 'nug', 'pcs', 'pc'].includes(u) || ['piece', 'nug', 'pcs', 'pc'].includes(bu)) return qty;
+  
+  let parsedUnit = u;
+  const match = u.match(/^([\d.]+)\s*(kg|g|gm|gram|l|ml)$/i);
+  if (match) parsedUnit = match[2].toLowerCase();
+
+  if (['g', 'gm', 'gram', 'grams', 'ग्रॅम', 'ग्राम'].includes(bu)) {
+    if (parsedUnit === 'kg') return qty * 1000; 
+    return qty; 
+  }
+  if (['kg', 'litre', 'l', 'ml'].includes(bu) || !bu) {
+    if (['g', 'gm', 'gram', 'grams', 'ग्रॅम', 'ग्राम', 'ml'].includes(parsedUnit)) return qty / 1000; 
+    if (parsedUnit === 'kg' && qty >= 20) return qty / 1000; 
+    return qty; 
+  }
   return qty;
+};
+
+// 🚀 FIXED: Accurately parses "4 x 5kg" and ignores DB sizes like "M"
+const formatCartWeight = (qty: number, unit: string, customSize?: string) => {
+  const u1 = normalizeUnitStr(unit);
+  const u2 = normalizeUnitStr(customSize || "");
+  
+  const effectiveUnit = u1.match(/^([\d.]+)\s*(kg|g|gm|gram|l|ml)$/i) ? u1 : (u2.match(/^([\d.]+)\s*(kg|g|gm|gram|l|ml)$/i) ? u2 : u1);
+  const match = effectiveUnit.match(/^([\d.]+)\s*(kg|g|gm|gram|l|ml)$/i);
+  
+  if (match) {
+     if (qty > 1) return `${qty} x ${effectiveUnit}`;
+     return effectiveUnit;
+  }
+
+  if (effectiveUnit === 'piece' || effectiveUnit === 'nug' || effectiveUnit === 'pcs' || effectiveUnit === 'pc') return `${qty} pc`;
+  if (effectiveUnit === 'kg' && qty < 1) return `${Math.round(qty * 1000)} g`;
+  if (effectiveUnit === 'g' && qty >= 1000) return `${(qty / 1000).toFixed(2)} kg`;
+  
+  return `${qty} ${effectiveUnit}`;
 };
 
 export default function InvoiceView() {
@@ -52,7 +63,6 @@ export default function InvoiceView() {
     if (!id) return;
 
     try {
-      // 1. Fetch Order & Tenant/Customer Details
       const { data: orderData, error: orderError } = await (supabase as any)
         .from("orders")
         .select(`
@@ -68,7 +78,6 @@ export default function InvoiceView() {
 
       const currentOrder = orderData as any;
 
-      // 2. Fetch Order Items & Custom Ingredients (Mix Masala support)
       const { data: itemsData, error: itemsError } = await (supabase as any)
         .from("order_items")
         .select(`
@@ -83,7 +92,6 @@ export default function InvoiceView() {
 
       if (itemsError) throw itemsError;
 
-      // 3. Fetch Payments
       const { data: paymentsData } = await (supabase as any)
         .from("payments")
         .select("*")
@@ -118,50 +126,41 @@ export default function InvoiceView() {
     );
   }
 
-  // --- CALCULATIONS & DATA EXTRACTION ---
   const totalPaid = payments.reduce((sum, p) => sum + safeNumber(p.amount), 0);
   const balanceDue = Math.max(0, safeNumber(order.total_amount) - totalPaid);
   const isPaid = balanceDue <= 0;
 
-  // Separate Labour Charge (मजूरी) from Physical Items
   const labourItems = items.filter(i => i.items?.item_type === 'SERVICE' || i.items?.item_name?.includes('Labour') || i.items?.item_name?.includes('मजूरी'));
   const physicalItems = items.filter(i => i.items?.item_type !== 'SERVICE' && !i.items?.item_name?.includes('Labour') && !i.items?.item_name?.includes('मजूरी'));
 
-  const totalLabourCharge = labourItems.reduce((sum, item) => sum + Math.abs(safeNumber(item.quantity) * safeNumber(item.price_at_order)), 0);
+  const totalLabourCharge = Math.round(labourItems.reduce((sum, item) => sum + Math.abs(safeNumber(item.quantity) * safeNumber(item.price_at_order)), 0));
   
-  // Accurately calculate Material Cost by multiplying Price * Qty exactly like POS Numpad
-  const totalMaterialCost = physicalItems.reduce((sum, item) => {
+  const totalMaterialCost = Math.round(physicalItems.reduce((sum, item) => {
     let lineTotal = 0;
     if (item.order_item_ingredients && item.order_item_ingredients.length > 0) {
-      // Calculate Mix Masala Custom Cost
       item.order_item_ingredients.forEach((ing: any) => {
         const rawPrice = safeNumber(ing.items?.selling_price);
         const normalizedQty = getNormalizedQtyForCost(ing.custom_quantity, ing.unit, ing.items?.base_unit || 'kg');
         lineTotal += (normalizedQty * rawPrice);
       });
     } else {
-      // Calculate Standard Item Cost
       lineTotal = Math.abs(safeNumber(item.quantity) * safeNumber(item.price_at_order));
     }
     return sum + lineTotal;
-  }, 0);
+  }, 0));
   
   const deliveryCharge = safeNumber(order.delivery_charge);
 
-  // Store details (With JMM Defaults if missing)
   const businessName = order.tenants?.tenant_name || "जय महाराष्ट्र मसाले (JMM)";
-  const tenantLogo = order.tenants?.tenant_logo || "/jmmlogo.png"; // Fallback to your local logo
+  const tenantLogo = order.tenants?.tenant_logo || "/jmmlogo.png"; 
   const tenantAddress = order.tenants?.tenant_address || "दुकान नं. 3, बाबला मस्जिद शेजारी, डिलाई रोड, ना. म. जोशी मार्ग, करीरोड, मुंबई - 400013.";
   const tenantPhone = order.tenants?.tenant_phone ? String(order.tenants.tenant_phone) : "98679 87460 / 98679 95629";
 
-  // Customer details
   const customerName = order.customers?.full_name || "Walk-in Customer";
   const customerPhone = order.customers?.phone_number || "";
   const customerAddress = order.customer_address || "";
 
-  const handlePrint = () => {
-    window.print();
-  };
+  const handlePrint = () => { window.print(); };
 
   return (
     <> 
@@ -177,62 +176,35 @@ export default function InvoiceView() {
       </style>
 
       <div className="min-h-screen bg-zinc-100 py-6 px-2 md:py-10 md:px-8 flex flex-col items-center font-sans">
-        
-        {/* --- ACTION BUTTONS (Hidden on Print) --- */}
         <div className="w-full max-w-[800px] flex justify-end gap-3 mb-4 no-print px-2">
-          <button
-            onClick={handlePrint}
-            className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-md transition-transform active:scale-95"
-          >
-            <Printer size={18} />
-            Print / PDF
+          <button onClick={handlePrint} className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-md transition-transform active:scale-95">
+            <Printer size={18} /> Download Bill
           </button>
         </div>
 
-        {/* --- MAIN INVOICE PAPER --- */}
         <div className="w-full max-w-[800px] bg-white shadow-xl invoice-container border border-zinc-300 relative overflow-hidden rounded-xl sm:rounded-none">
-          
-          {/* Top Border Accent */}
           <div className="h-3 w-full bg-orange-600 print-exact"></div>
 
           <div className="p-4 sm:p-8">
-            {/* HEADER SECTION */}
             <div className="text-center mb-6 flex flex-col items-center">
-              {tenantLogo && (
-                <img src={tenantLogo} alt="Business Logo" className="h-20 w-auto object-contain mb-3 print-exact" />
-              )}
-              
-              <h2 className="text-xs sm:text-sm font-bold text-zinc-700 mb-1">
-                आम्ही सर्व प्रकारचे मसाले ऑर्डर प्रमाणे भाजून व कुटून देतो.
-              </h2>
-              <div className="flex justify-center items-center gap-3 mb-2">
-                <h1 className="text-2xl sm:text-4xl font-black text-orange-600 tracking-tight print-exact">
-                  {businessName}
-                </h1>
-              </div>
-              <p className="text-xs sm:text-sm text-zinc-800 font-semibold max-w-lg mx-auto leading-relaxed">
-                {tenantAddress}
-              </p>
+              {tenantLogo && ( <img src={tenantLogo} alt="Business Logo" className="h-20 w-auto object-contain mb-3 print-exact" /> )}
+              <h2 className="text-xs sm:text-sm font-bold text-zinc-700 mb-1">आम्ही सर्व प्रकारचे मसाले ऑर्डर प्रमाणे भाजून व कुटून देतो.</h2>
+              <div className="flex justify-center items-center gap-3 mb-2"><h1 className="text-2xl sm:text-4xl font-black text-orange-600 tracking-tight print-exact">{businessName}</h1></div>
+              <p className="text-xs sm:text-sm text-zinc-800 font-semibold max-w-lg mx-auto leading-relaxed">{tenantAddress}</p>
               <div className="flex justify-center items-center gap-4 mt-2 text-xs sm:text-sm font-bold text-zinc-800">
                 <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5" /> {tenantPhone}</span>
               </div>
             </div>
 
-            {/* CUSTOMER & BILL META GRID */}
             <div className="grid grid-cols-2 md:grid-cols-4 border-2 border-black mb-6 print-exact text-sm font-bold text-black">
-              {/* Row 1 */}
               <div className="border-r-2 border-b-2 border-black p-2 bg-zinc-100 print-exact flex items-center justify-center">नाव (Name)</div>
               <div className="border-b-2 border-black p-2 md:border-r-2 flex items-center col-span-1 md:col-span-1 truncate">{customerName}</div>
               <div className="border-r-2 border-b-2 border-black p-2 bg-zinc-100 print-exact flex items-center justify-center">मोबाईल (Mobile)</div>
               <div className="border-b-2 border-black p-2 flex items-center truncate">{customerPhone || '-'}</div>
-              
-              {/* Row 2 */}
               <div className="border-r-2 border-black p-2 bg-zinc-100 print-exact flex items-center justify-center">बिल क्र. (Bill No)</div>
               <div className="border-r-2 border-black p-2 flex items-center text-orange-700 print-exact">{order.order_number}</div>
               <div className="border-r-2 border-black p-2 bg-zinc-100 print-exact flex items-center justify-center">दिनांक (Date)</div>
-              <div className="border-black p-2 flex items-center">
-                {new Date(order.created_at).toLocaleDateString("en-IN")}
-              </div>
+              <div className="border-black p-2 flex items-center">{new Date(order.created_at).toLocaleDateString("en-IN")}</div>
             </div>
 
             {customerAddress && (
@@ -242,7 +214,6 @@ export default function InvoiceView() {
               </div>
             )}
 
-            {/* MAIN ITEMS TABLE */}
             <table className="w-full border-collapse border-2 border-black text-sm font-bold text-black mb-6 print-exact">
               <thead>
                 <tr className="bg-[#fde047] print-exact border-b-2 border-black text-center">
@@ -254,7 +225,6 @@ export default function InvoiceView() {
               <tbody>
                 {physicalItems.map((item, idx) => {
                   const hasCustomIngredients = item.order_item_ingredients && item.order_item_ingredients.length > 0;
-                  const itemSize = item.items?.size ? ` (${item.items.size})` : '';
                   
                   return (
                     <React.Fragment key={idx}>
@@ -281,17 +251,25 @@ export default function InvoiceView() {
                            )
                          })
                       ) : (
-                        <tr className="border-b border-black">
-                          <td className="border-r-2 border-black px-3 py-2">
-                            <span className="text-black">{item.items?.item_name || "Unknown Item"}{itemSize}</span>
-                          </td>
-                          <td className="border-r-2 border-black px-3 py-2 text-center align-middle whitespace-nowrap">
-                            {formatCartWeight(Math.abs(item.quantity), item.items?.base_unit || 'pc')}
-                          </td>
-                          <td className="px-3 py-2 text-right align-middle">
-                            {Math.floor(Math.abs(item.quantity * safeNumber(item.price_at_order)))}
-                          </td>
-                        </tr>
+                        (() => {
+                          const sizeStr = item.items?.size ? ` (${item.items.size})` : '';
+                          const printUnit = item.unit || item.items?.base_unit || 'pc';
+                          
+                          return (
+                            <tr className="border-b border-black">
+                              <td className="border-r-2 border-black px-3 py-2">
+                                <span className="text-black">{item.items?.item_name || "Unknown Item"}{sizeStr}</span>
+                              </td>
+                              <td className="border-r-2 border-black px-3 py-2 text-center align-middle whitespace-nowrap">
+                                {/* 🚀 Passes size strictly for dynamic formatting if needed */}
+                                {formatCartWeight(Math.abs(item.quantity), printUnit, item.items?.size)}
+                              </td>
+                              <td className="px-3 py-2 text-right align-middle">
+                                {Math.floor(Math.abs(item.quantity * safeNumber(item.price_at_order)))}
+                              </td>
+                            </tr>
+                          );
+                        })()
                       )}
                     </React.Fragment>
                   );
@@ -299,7 +277,6 @@ export default function InvoiceView() {
               </tbody>
             </table>
 
-            {/* SUMMARY TOTALS */}
             <div className="flex justify-end">
               <table className="w-full sm:w-[60%] border-collapse border-2 border-black text-sm font-bold text-black print-exact">
                 <tbody>
@@ -343,7 +320,6 @@ export default function InvoiceView() {
               </table>
             </div>
 
-            {/* FOOTER MESSAGES */}
             <div className="mt-10 pt-4 border-t border-dashed border-zinc-300 text-center">
               <div className="flex justify-center items-center gap-2 mb-2 no-print">
                 {isPaid ? (

@@ -326,7 +326,7 @@ export default function InvoiceView() {
               {!isPaid && (
                 <div className="flex flex-col items-center justify-center mb-8 no-print bg-zinc-50 p-4 rounded-2xl border border-zinc-200">
                   <div className="bg-white p-2 rounded-xl shadow-sm border border-zinc-200">
-                    <QRCode value="upi://pay?pa=jaymaharashtramasale@upi&pn=JMM&cu=INR" size={120} />
+                    <QRCode value="upi://pay?pa=9867987460@okbizaxis&pn=JMM&cu=INR" size={120} />
                   </div>
                   <p className="mt-3 text-sm font-bold text-zinc-700">Scan to Pay Balance: ₹{balanceDue.toFixed(0)}</p>
                   <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1">पेमेंट केल्यावर कृपया स्क्रीनशॉट पाठवा.....</p>

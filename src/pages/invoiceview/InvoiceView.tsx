@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
+import QRCode from "react-qr-code";
 import {
   MapPin, Loader2, Printer, Phone, CheckCircle2, Download
 } from "lucide-react";
@@ -320,7 +321,18 @@ export default function InvoiceView() {
               </table>
             </div>
 
-            <div className="mt-10 pt-4 border-t border-dashed border-zinc-300 text-center">
+            <div className="mt-10 pt-8 border-t-2 border-dashed border-zinc-300 text-center flex flex-col items-center">
+              {/* 🚀 ADDED: Scannable UPI QR Code (Hidden on Physical Prints) */}
+              {!isPaid && (
+                <div className="flex flex-col items-center justify-center mb-8 no-print bg-zinc-50 p-4 rounded-2xl border border-zinc-200">
+                  <div className="bg-white p-2 rounded-xl shadow-sm border border-zinc-200">
+                    <QRCode value="upi://pay?pa=jaymaharashtramasale@upi&pn=JMM&cu=INR" size={120} />
+                  </div>
+                  <p className="mt-3 text-sm font-bold text-zinc-700">Scan to Pay Balance: ₹{balanceDue.toFixed(0)}</p>
+                  <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1">पेमेंट केल्यावर कृपया स्क्रीनशॉट पाठवा.....</p>
+                </div>
+              )}
+
               <div className="flex justify-center items-center gap-2 mb-2 no-print">
                 {isPaid ? (
                   <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1">
@@ -332,7 +344,7 @@ export default function InvoiceView() {
                   </span>
                 )}
               </div>
-              <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">
+              <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mt-2">
                 धन्यवाद! पुन्हा भेट द्या.
               </p>
               <p className="text-[10px] text-zinc-400 mt-1 font-semibold">

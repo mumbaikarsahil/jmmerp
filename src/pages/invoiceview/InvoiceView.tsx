@@ -2,6 +2,8 @@ import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import QRCode from "react-qr-code";
+import { Switch } from "@/components/ui/switch";
+import { useToast } from "@/hooks/use-toast";
 import {
   MapPin, Loader2, Printer, Phone, CheckCircle2, Download
 } from "lucide-react";
@@ -55,6 +57,21 @@ export default function InvoiceView() {
   const [items, setItems] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const { toast } = useToast();
+
+  // 🚀 ADDED: Allows you to mark an item as given directly from the Invoice View
+  const toggleHandedOver = async (orderItemId: string, currentStatus: boolean) => {
+      try {
+          const newStatus = !currentStatus;
+          await (supabase as any).from('order_items').update({ is_handed_over: newStatus }).eq('id', orderItemId);
+          
+          setItems(prev => prev.map(i => i.id === orderItemId ? { ...i, is_handed_over: newStatus } : i));
+          
+          toast({ title: "Updated Handed Over Status" });
+      } catch (e) {
+          toast({ title: "Error updating status", variant: "destructive" });
+      }
+  };
 
   useEffect(() => {
     fetchBill();
@@ -226,6 +243,7 @@ export default function InvoiceView() {
               <tbody>
                 {physicalItems.map((item, idx) => {
                   const hasCustomIngredients = item.order_item_ingredients && item.order_item_ingredients.length > 0;
+                  const givenTag = item.is_handed_over ? " (हातोहात*)" : ""; // 🚀 Added Tag string
                   
                   return (
                     <React.Fragment key={idx}>
@@ -240,7 +258,15 @@ export default function InvoiceView() {
                            return (
                              <tr key={`${idx}-${i}`} className="border-b border-black">
                                <td className="border-r-2 border-black px-3 py-2">
-                                 <span className="text-black">{ing.items?.item_name || "Spice"}</span>
+                                 <span className="text-black font-bold">{ing.items?.item_name || "Spice"}{givenTag}</span>
+                                 
+                                 {/* 🚀 ADDED: Toggle Switch for custom mixes (No Print) */}
+                                 {i === 0 && (
+                                   <div className="no-print mt-2 flex items-center gap-2">
+                                      <span className="text-[10px] text-zinc-500 font-bold uppercase">Given Mix?</span>
+                                      <Switch checked={!!item.is_handed_over} onCheckedChange={() => toggleHandedOver(item.id, !!item.is_handed_over)} className="scale-75 m-0 data-[state=checked]:bg-emerald-500" />
+                                   </div>
+                                 )}
                                </td>
                                <td className="border-r-2 border-black px-3 py-2 text-center align-middle whitespace-nowrap">
                                  {formatCartWeight(ing.custom_quantity, ing.unit)}
@@ -259,10 +285,15 @@ export default function InvoiceView() {
                           return (
                             <tr className="border-b border-black">
                               <td className="border-r-2 border-black px-3 py-2">
-                                <span className="text-black">{item.items?.item_name || "Unknown Item"}{sizeStr}</span>
+                                <span className="text-black font-bold">{item.items?.item_name || "Unknown Item"}{sizeStr}{givenTag}</span>
+                                
+                                {/* 🚀 ADDED: Toggle Switch for standard items (No Print) */}
+                                <div className="no-print mt-2 flex items-center gap-2">
+                                   <span className="text-[10px] text-zinc-500 font-bold uppercase">Given?</span>
+                                   <Switch checked={!!item.is_handed_over} onCheckedChange={() => toggleHandedOver(item.id, !!item.is_handed_over)} className="scale-75 m-0 data-[state=checked]:bg-emerald-500" />
+                                </div>
                               </td>
                               <td className="border-r-2 border-black px-3 py-2 text-center align-middle whitespace-nowrap">
-                                {/* 🚀 Passes size strictly for dynamic formatting if needed */}
                                 {formatCartWeight(Math.abs(item.quantity), printUnit, item.items?.size)}
                               </td>
                               <td className="px-3 py-2 text-right align-middle">
@@ -326,7 +357,7 @@ export default function InvoiceView() {
               {!isPaid && (
                 <div className="flex flex-col items-center justify-center mb-8 no-print bg-zinc-50 p-4 rounded-2xl border border-zinc-200">
                   <div className="bg-white p-2 rounded-xl shadow-sm border border-zinc-200">
-                    <QRCode value="upi://pay?pa=9867987460@okbizaxis&pn=JMM&cu=INR" size={120} />
+                    <QRCode value="upi://pay?pa=jaymaharashtramasale@upi&pn=JMM&cu=INR" size={120} />
                   </div>
                   <p className="mt-3 text-sm font-bold text-zinc-700">Scan to Pay Balance: ₹{balanceDue.toFixed(0)}</p>
                   <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1">पेमेंट केल्यावर कृपया स्क्रीनशॉट पाठवा.....</p>

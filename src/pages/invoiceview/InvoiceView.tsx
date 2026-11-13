@@ -2,10 +2,8 @@ import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import QRCode from "react-qr-code";
-import { Switch } from "@/components/ui/switch";
-import { useToast } from "@/hooks/use-toast";
 import {
-  MapPin, Loader2, Printer, Phone, CheckCircle2, Download
+  Phone, CheckCircle2, Download, ExternalLink, Printer, Loader2
 } from "lucide-react";
 
 const normalizeUnitStr = (str: string) => String(str || "").toLowerCase().trim();
@@ -57,21 +55,6 @@ export default function InvoiceView() {
   const [items, setItems] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const { toast } = useToast();
-
-  // 🚀 ADDED: Allows you to mark an item as given directly from the Invoice View
-  const toggleHandedOver = async (orderItemId: string, currentStatus: boolean) => {
-      try {
-          const newStatus = !currentStatus;
-          await (supabase as any).from('order_items').update({ is_handed_over: newStatus }).eq('id', orderItemId);
-          
-          setItems(prev => prev.map(i => i.id === orderItemId ? { ...i, is_handed_over: newStatus } : i));
-          
-          toast({ title: "Updated Handed Over Status" });
-      } catch (e) {
-          toast({ title: "Error updating status", variant: "destructive" });
-      }
-  };
 
   useEffect(() => {
     fetchBill();
@@ -169,21 +152,50 @@ export default function InvoiceView() {
   
   const deliveryCharge = safeNumber(order.delivery_charge);
 
-  const businessName = order.tenants?.tenant_name || "जय महाराष्ट्र मसाले (JMM)";
-  const tenantLogo = order.tenants?.tenant_logo || "/jmmlogo.png"; 
-  const tenantAddress = order.tenants?.tenant_address || "दुकान नं. 3, बाबला मस्जिद शेजारी, डिलाई रोड, ना. म. जोशी मार्ग, करीरोड, मुंबई - 400013.";
+  const businessName = "जय महाराष्ट्र मसाले";
+  const branchName = "(करी रोड)";
+  const tagline = "आम्ही सर्व प्रकारचे मसाले ऑर्डर प्रमाणे भाजून व कुटून देतो.";
+  const tenantLogo = order.tenants?.tenant_logo || "/jmmbill.png"; 
+  const tenantAddress = order.tenants?.tenant_address || "दुकान नं. 3, बावला मस्जिद शेजारी, डिलाईल रोड, ना. म. जोशी मार्ग, करीरोड, मुंबई - 400013.";
   const tenantPhone = order.tenants?.tenant_phone ? String(order.tenants.tenant_phone) : "98679 87460 / 98679 95629";
 
   const customerName = order.customers?.full_name || "Walk-in Customer";
   const customerPhone = order.customers?.phone_number || "";
   const customerAddress = order.customer_address || "";
 
+  // 🚀 FIXED: Always defaults to total_amount if balance is 0 to ensure the QR code always works
+  const qrPaymentAmount = balanceDue > 0 ? balanceDue : safeNumber(order.total_amount);
+  const upiLink = `upi://pay?pa=9867987460@okbizaxis&pn=JMM&cu=INR&am=${qrPaymentAmount.toFixed(2)}`;
+
   const handlePrint = () => { window.print(); };
+
+  const downloadQR = () => {
+    const svg = document.getElementById("payment-qr-code");
+    if (!svg) return;
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    const img = new Image();
+    img.onload = () => {
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx?.drawImage(img, 0, 0);
+      const pngFile = canvas.toDataURL("image/png");
+      const downloadLink = document.createElement("a");
+      downloadLink.download = "JMM-Payment-QR.png";
+      downloadLink.href = `${pngFile}`;
+      downloadLink.click();
+    };
+    img.src = "data:image/svg+xml;base64," + btoa(svgData);
+  };
 
   return (
     <> 
       <style>
         {`          
+          /* 🚀 LOAD MARATHI FONT */
+          @import url('https://fonts.googleapis.com/css2?family=Yatra+One&display=swap');
+
           @media print {
             body { background-color: white !important; margin: 0; padding: 0; }
             .no-print { display: none !important; }
@@ -195,22 +207,26 @@ export default function InvoiceView() {
 
       <div className="min-h-screen bg-zinc-100 py-6 px-2 md:py-10 md:px-8 flex flex-col items-center font-sans">
         <div className="w-full max-w-[800px] flex justify-end gap-3 mb-4 no-print px-2">
-          <button onClick={handlePrint} className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-md transition-transform active:scale-95">
-            <Printer size={18} /> Download Bill
+          <button onClick={handlePrint} className="flex items-center gap-2 bg-zinc-900 hover:bg-zinc-800 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-md transition-transform active:scale-95">
+            <Printer size={18} /> Print Bill
           </button>
         </div>
 
         <div className="w-full max-w-[800px] bg-white shadow-xl invoice-container border border-zinc-300 relative overflow-hidden rounded-xl sm:rounded-none">
-          <div className="h-3 w-full bg-orange-600 print-exact"></div>
+          <div className="h-3 w-full bg-black print-exact"></div>
 
           <div className="p-4 sm:p-8">
             <div className="text-center mb-6 flex flex-col items-center">
-              {tenantLogo && ( <img src={tenantLogo} alt="Business Logo" className="h-20 w-auto object-contain mb-3 print-exact" /> )}
-              <h2 className="text-xs sm:text-sm font-bold text-zinc-700 mb-1">आम्ही सर्व प्रकारचे मसाले ऑर्डर प्रमाणे भाजून व कुटून देतो.</h2>
-              <div className="flex justify-center items-center gap-3 mb-2"><h1 className="text-2xl sm:text-4xl font-black text-orange-600 tracking-tight print-exact">{businessName}</h1></div>
-              <p className="text-xs sm:text-sm text-zinc-800 font-semibold max-w-lg mx-auto leading-relaxed">{tenantAddress}</p>
-              <div className="flex justify-center items-center gap-4 mt-2 text-xs sm:text-sm font-bold text-zinc-800">
-                <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5" /> {tenantPhone}</span>
+              {/* 🚀 FIXED: Removed grayscale filter so logo shows in full color */}
+              {tenantLogo && ( <img src={tenantLogo} alt="JMM Logo" className="h-28 w-auto object-contain mb-1 print-exact" /> )}
+              <h1 className="text-3xl sm:text-5xl font-black text-black tracking-tight print-exact font-['Yatra_One'] -mt-3">{businessName}</h1>
+              <h2 className="text-xl sm:text-2xl font-black text-black tracking-tight print-exact font-['Yatra_One'] mb-2">{branchName}</h2>
+              
+              <h3 className="text-sm sm:text-base font-black text-zinc-800 mb-2">{tagline}</h3>
+              <p className="text-xs sm:text-sm text-zinc-700 font-bold max-w-lg mx-auto leading-relaxed border-t border-dashed border-zinc-400 pt-2 px-4">{tenantAddress}</p>
+              
+              <div className="flex justify-center items-center gap-4 mt-2 text-sm sm:text-base font-black text-black">
+                <span className="flex items-center gap-1.5"><Phone className="h-4 w-4" /> {tenantPhone}</span>
               </div>
             </div>
 
@@ -220,7 +236,7 @@ export default function InvoiceView() {
               <div className="border-r-2 border-b-2 border-black p-2 bg-zinc-100 print-exact flex items-center justify-center">मोबाईल (Mobile)</div>
               <div className="border-b-2 border-black p-2 flex items-center truncate">{customerPhone || '-'}</div>
               <div className="border-r-2 border-black p-2 bg-zinc-100 print-exact flex items-center justify-center">बिल क्र. (Bill No)</div>
-              <div className="border-r-2 border-black p-2 flex items-center text-orange-700 print-exact">{order.order_number}</div>
+              <div className="border-r-2 border-black p-2 flex items-center text-black print-exact">{order.order_number}</div>
               <div className="border-r-2 border-black p-2 bg-zinc-100 print-exact flex items-center justify-center">दिनांक (Date)</div>
               <div className="border-black p-2 flex items-center">{new Date(order.created_at).toLocaleDateString("en-IN")}</div>
             </div>
@@ -234,8 +250,8 @@ export default function InvoiceView() {
 
             <table className="w-full border-collapse border-2 border-black text-sm font-bold text-black mb-6 print-exact">
               <thead>
-                <tr className="bg-[#fde047] print-exact border-b-2 border-black text-center">
-                  <th className="border-r-2 border-black px-3 py-2 w-[60%]">जिन्नस (Item Details)</th>
+                <tr className="bg-zinc-100 print-exact border-b-2 border-black text-center">
+                  <th className="border-r-2 border-black px-3 py-2 w-[60%]">तपशील (Item Details)</th>
                   <th className="border-r-2 border-black px-3 py-2 w-[20%]">वजन (Qty)</th>
                   <th className="px-3 py-2 w-[20%]">किंमत (Price)</th>
                 </tr>
@@ -243,7 +259,16 @@ export default function InvoiceView() {
               <tbody>
                 {physicalItems.map((item, idx) => {
                   const hasCustomIngredients = item.order_item_ingredients && item.order_item_ingredients.length > 0;
-                  const givenTag = item.is_handed_over ? " (हातोहात*)" : ""; // 🚀 Added Tag string
+                  
+                  let givenTag = "";
+                  const handedOverQty = Number(item.handed_over_qty || 0);
+                  if (handedOverQty > 0) {
+                      if (handedOverQty === item.quantity || item.quantity === 1) {
+                          givenTag = " (हातोहात)"; 
+                      } else {
+                          givenTag = ` (${handedOverQty} हातोहात)`; 
+                      }
+                  }
                   
                   return (
                     <React.Fragment key={idx}>
@@ -258,18 +283,12 @@ export default function InvoiceView() {
                            return (
                              <tr key={`${idx}-${i}`} className="border-b border-black">
                                <td className="border-r-2 border-black px-3 py-2">
-                                 <span className="text-black font-bold">{ing.items?.item_name || "Spice"}{givenTag}</span>
-                                 
-                                 {/* 🚀 ADDED: Toggle Switch for custom mixes (No Print) */}
-                                 {i === 0 && (
-                                   <div className="no-print mt-2 flex items-center gap-2">
-                                      <span className="text-[10px] text-zinc-500 font-bold uppercase">Given Mix?</span>
-                                      <Switch checked={!!item.is_handed_over} onCheckedChange={() => toggleHandedOver(item.id, !!item.is_handed_over)} className="scale-75 m-0 data-[state=checked]:bg-emerald-500" />
-                                   </div>
-                                 )}
+                                 <span className="text-black font-bold">{ing.items?.item_name || "Spice"}</span>
                                </td>
+                               {/* 🚀 FIXED: Removed the Given/Switch toggles completely */}
                                <td className="border-r-2 border-black px-3 py-2 text-center align-middle whitespace-nowrap">
                                  {formatCartWeight(ing.custom_quantity, ing.unit)}
+                                 {givenTag && <div className="text-[11px] mt-1 text-zinc-600">{givenTag}</div>}
                                </td>
                                <td className="px-3 py-2 text-right align-middle">
                                  {Math.round(lineCost)}
@@ -285,16 +304,12 @@ export default function InvoiceView() {
                           return (
                             <tr className="border-b border-black">
                               <td className="border-r-2 border-black px-3 py-2">
-                                <span className="text-black font-bold">{item.items?.item_name || "Unknown Item"}{sizeStr}{givenTag}</span>
-                                
-                                {/* 🚀 ADDED: Toggle Switch for standard items (No Print) */}
-                                <div className="no-print mt-2 flex items-center gap-2">
-                                   <span className="text-[10px] text-zinc-500 font-bold uppercase">Given?</span>
-                                   <Switch checked={!!item.is_handed_over} onCheckedChange={() => toggleHandedOver(item.id, !!item.is_handed_over)} className="scale-75 m-0 data-[state=checked]:bg-emerald-500" />
-                                </div>
+                                <span className="text-black font-bold">{item.items?.item_name || "Unknown Item"}{sizeStr}</span>
                               </td>
+                              {/* 🚀 FIXED: Removed the Given/Switch toggles completely */}
                               <td className="border-r-2 border-black px-3 py-2 text-center align-middle whitespace-nowrap">
                                 {formatCartWeight(Math.abs(item.quantity), printUnit, item.items?.size)}
+                                {givenTag && <div className="text-[11px] mt-1 text-zinc-600">{givenTag}</div>}
                               </td>
                               <td className="px-3 py-2 text-right align-middle">
                                 {Math.floor(Math.abs(item.quantity * safeNumber(item.price_at_order)))}
@@ -331,20 +346,20 @@ export default function InvoiceView() {
                     </tr>
                   )}
 
-                  <tr className="border-b-2 border-black bg-zinc-100 print-exact text-lg">
+                  <tr className="border-b-2 border-black bg-zinc-100 print-exact text-lg font-black">
                     <td className="border-r-2 border-black px-3 py-3 text-right">एकूण बिलाची रक्कम (Grand Total)</td>
-                    <td className="px-3 py-3 text-right text-orange-700">{safeNumber(order.total_amount).toFixed(0)}</td>
+                    <td className="px-3 py-3 text-right text-black">{safeNumber(order.total_amount).toFixed(0)}</td>
                   </tr>
 
                   {totalPaid > 0 && balanceDue > 0 && (
                     <>
                       <tr className="border-b border-black">
-                        <td className="border-r-2 border-black px-3 py-2 text-right text-emerald-700">ऍडव्हान्स जमा (Advance Paid)</td>
-                        <td className="px-3 py-2 text-right text-emerald-700">-{totalPaid.toFixed(0)}</td>
+                        <td className="border-r-2 border-black px-3 py-2 text-right text-black font-black">ऍडव्हान्स जमा (Advance Paid)</td>
+                        <td className="px-3 py-2 text-right text-black font-black">-{totalPaid.toFixed(0)}</td>
                       </tr>
-                      <tr className="bg-red-50 print-exact text-lg">
-                        <td className="border-r-2 border-black px-3 py-3 text-right text-red-700">बाकी रक्कम (Balance Due)</td>
-                        <td className="px-3 py-3 text-right text-red-700">{balanceDue.toFixed(0)}</td>
+                      <tr className="bg-zinc-100 print-exact text-lg font-black">
+                        <td className="border-r-2 border-black px-3 py-3 text-right text-black">बाकी रक्कम (Balance Due)</td>
+                        <td className="px-3 py-3 text-right text-black">{balanceDue.toFixed(0)}</td>
                       </tr>
                     </>
                   )}
@@ -352,35 +367,49 @@ export default function InvoiceView() {
               </table>
             </div>
 
-            <div className="mt-10 pt-8 border-t-2 border-dashed border-zinc-300 text-center flex flex-col items-center">
-              {/* 🚀 ADDED: Scannable UPI QR Code (Hidden on Physical Prints) */}
-              {!isPaid && (
-                <div className="flex flex-col items-center justify-center mb-8 no-print bg-zinc-50 p-4 rounded-2xl border border-zinc-200">
-                  <div className="bg-white p-2 rounded-xl shadow-sm border border-zinc-200">
-                    <QRCode value="upi://pay?pa=jaymaharashtramasale@upi&pn=JMM&cu=INR" size={120} />
-                  </div>
-                  <p className="mt-3 text-sm font-bold text-zinc-700">Scan to Pay Balance: ₹{balanceDue.toFixed(0)}</p>
-                  <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1">पेमेंट केल्यावर कृपया स्क्रीनशॉट पाठवा.....</p>
+            <div className="mt-10 pt-8 border-t-2 border-dashed border-zinc-400 text-center flex flex-col items-center">
+              
+              {/* 🚀 FIXED: QR Code now always displays (uses Total Amount if balance is 0) */}
+              <div className="flex flex-col items-center justify-center mb-8 no-print bg-zinc-50 p-6 rounded-3xl border border-zinc-200 shadow-sm w-full sm:w-auto">
+                <a href={upiLink} className="bg-white p-3 rounded-2xl shadow-md border border-zinc-200 hover:scale-105 transition-transform cursor-pointer block">
+                  <QRCode id="payment-qr-code" value={upiLink} size={150} />
+                </a>
+                
+                <h3 className="mt-4 text-lg font-black text-zinc-900">Scan to Pay: ₹{qrPaymentAmount.toFixed(0)}</h3>
+                <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mt-1 mb-4">
+                  {isPaid ? "For your records / future payments" : "पेमेंट केल्यावर कृपया स्क्रीनशॉट पाठवा"}
+                </p>
+                
+                <div className="flex gap-2">
+                   <a href={upiLink} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-sm transition-colors md:hidden">
+                      <ExternalLink size={14}/> Pay Now
+                   </a>
+                   <button onClick={downloadQR} className="flex items-center gap-2 bg-white border border-zinc-300 text-zinc-700 hover:bg-zinc-100 px-4 py-2 rounded-xl text-xs font-bold shadow-sm transition-colors">
+                      <Download size={14}/> Download QR
+                   </button>
                 </div>
-              )}
+              </div>
 
               <div className="flex justify-center items-center gap-2 mb-2 no-print">
                 {isPaid ? (
-                  <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1">
-                    <CheckCircle2 className="h-4 w-4" /> Payment Complete
+                  <span className="bg-emerald-100 text-emerald-800 px-4 py-1.5 rounded-full text-sm font-black flex items-center gap-1 border border-emerald-200 shadow-sm">
+                    <CheckCircle2 className="h-4.5 w-4.5" /> Payment Complete
                   </span>
                 ) : (
-                  <span className="bg-orange-100 text-orange-700 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1">
-                    <Loader2 className="h-4 w-4 animate-spin" /> Pending Dues: ₹{balanceDue.toFixed(0)}
+                  <span className="bg-amber-100 text-amber-800 px-4 py-1.5 rounded-full text-sm font-black flex items-center gap-1 border border-amber-200 shadow-sm">
+                    <Loader2 className="h-4.5 w-4.5 animate-spin" /> Pending Dues: ₹{balanceDue.toFixed(0)}
                   </span>
                 )}
               </div>
-              <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mt-2">
+              
+              <p className="text-sm font-black text-black uppercase tracking-widest mt-4">
                 धन्यवाद! पुन्हा भेट द्या.
               </p>
-              <p className="text-[10px] text-zinc-400 mt-1 font-semibold">
-                This is a computer-generated invoice via Biillo OS.
-              </p>
+              
+              <div className="mt-4 w-full flex flex-col gap-1 text-[12px] font-bold text-zinc-500 pt-2 text-center no-print border-t border-zinc-200">
+                  <span>www.thejmmindia.com</span>
+                  <span>This is a computer-generated invoice via Biillo OS.</span>
+              </div>
             </div>
 
           </div>

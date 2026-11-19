@@ -8,6 +8,11 @@ import {
 
 const normalizeUnitStr = (str: string) => String(str || "").toLowerCase().trim();
 
+const getItemObj = (itemsField: any) => {
+  if (!itemsField) return null;
+  return Array.isArray(itemsField) ? itemsField[0] : itemsField;
+};
+
 const getNormalizedQtyForCost = (qty: number, displayUnit: string, dbBaseUnit: string) => {
   const u = normalizeUnitStr(displayUnit); 
   const bu = normalizeUnitStr(dbBaseUnit);
@@ -29,7 +34,6 @@ const getNormalizedQtyForCost = (qty: number, displayUnit: string, dbBaseUnit: s
   return qty;
 };
 
-// 🚀 FIXED: Accurately parses "4 x 5kg" and ignores DB sizes like "M"
 const formatCartWeight = (qty: number, unit: string, customSize?: string) => {
   const u1 = normalizeUnitStr(unit);
   const u2 = normalizeUnitStr(customSize || "");
@@ -86,7 +90,7 @@ export default function InvoiceView() {
           items ( item_name, base_unit, item_type, selling_price, size ),
           order_item_ingredients (
             custom_quantity, unit,
-            items ( item_name, selling_price, base_unit )
+            items ( item_name, selling_price, base_unit, item_type )
           )
         `)
         .eq("order_id", currentOrder.id);
@@ -131,24 +135,82 @@ export default function InvoiceView() {
   const balanceDue = Math.max(0, safeNumber(order.total_amount) - totalPaid);
   const isPaid = balanceDue <= 0;
 
-  const labourItems = items.filter(i => i.items?.item_type === 'SERVICE' || i.items?.item_name?.includes('Labour') || i.items?.item_name?.includes('मजूरी'));
-  const physicalItems = items.filter(i => i.items?.item_type !== 'SERVICE' && !i.items?.item_name?.includes('Labour') && !i.items?.item_name?.includes('मजूरी'));
+  // 🚀 FIXED: Extract & deduplicate Oil and Labour services cleanly (matching Sales.tsx)
+  const extractedServicesMap: Record<string, number> = {};
+  const physicalItems: any[] = [];
+  let totalMaterialCost = 0;
 
-  const totalLabourCharge = Math.round(labourItems.reduce((sum, item) => sum + Math.abs(safeNumber(item.quantity) * safeNumber(item.price_at_order)), 0));
-  
-  const totalMaterialCost = Math.round(physicalItems.reduce((sum, item) => {
-    let lineTotal = 0;
-    if (item.order_item_ingredients && item.order_item_ingredients.length > 0) {
-      item.order_item_ingredients.forEach((ing: any) => {
-        const rawPrice = safeNumber(ing.items?.selling_price);
-        const normalizedQty = getNormalizedQtyForCost(ing.custom_quantity, ing.unit, ing.items?.base_unit || 'kg');
-        lineTotal += (normalizedQty * rawPrice);
+  const hasStandaloneServices = items.some(oi => {
+    const obj = getItemObj(oi.items);
+    return obj?.item_type === 'SERVICE' || obj?.item_name?.includes('Labour') || obj?.item_name?.includes('मजूरी');
+  });
+
+  items.forEach((oi) => {
+    const itemObj = getItemObj(oi.items);
+    const isStandaloneService = itemObj?.item_type === 'SERVICE' || itemObj?.item_name?.includes('Labour') || itemObj?.item_name?.includes('मजूरी');
+
+    if (!isStandaloneService) {
+      const spices: any[] = [];
+      let embeddedServiceCount = 0;
+      let ingredientsTotal = 0;
+
+      if (oi.order_item_ingredients && oi.order_item_ingredients.length > 0) {
+        oi.order_item_ingredients.forEach((ing: any) => {
+          const ingObj = getItemObj(ing.items);
+
+          if (ingObj?.item_type === 'SERVICE' || ing.unit === 'SERVICE') {
+            const chargePerUnit = safeNumber(ing.custom_quantity) * safeNumber(ingObj?.selling_price);
+            const totalCharge = chargePerUnit * Math.abs(safeNumber(oi.quantity));
+            const svcName = ingObj?.item_name || "Service";
+            extractedServicesMap[svcName] = (extractedServicesMap[svcName] || 0) + totalCharge;
+            embeddedServiceCount++;
+          } else {
+            const rawPrice = safeNumber(ingObj?.selling_price);
+            const normalizedQty = getNormalizedQtyForCost(ing.custom_quantity, ing.unit, ingObj?.base_unit || 'kg');
+            ingredientsTotal += (normalizedQty * rawPrice);
+            spices.push(ing);
+          }
+        });
+
+        totalMaterialCost += (ingredientsTotal * Math.abs(safeNumber(oi.quantity)));
+
+        // Backwards compatibility for older bills where services weren't saved explicitly
+        if (embeddedServiceCount === 0 && !hasStandaloneServices && spices.length > 0) {
+          const itemTotal = Math.abs(safeNumber(oi.quantity) * safeNumber(oi.price_at_order));
+          const diff = Math.round(itemTotal - (ingredientsTotal * Math.abs(safeNumber(oi.quantity))));
+          if (diff > 0) {
+            extractedServicesMap["मजुरी / Labour & Oil"] = (extractedServicesMap["मजुरी / Labour & Oil"] || 0) + diff;
+          }
+        }
+      } else {
+        totalMaterialCost += Math.abs(safeNumber(oi.quantity) * safeNumber(oi.price_at_order));
+      }
+
+      physicalItems.push({
+        ...oi,
+        items: itemObj,
+        cleanSpices: spices
       });
-    } else {
-      lineTotal = Math.abs(safeNumber(item.quantity) * safeNumber(item.price_at_order));
     }
-    return sum + lineTotal;
-  }, 0));
+  });
+
+  // Process standalone services & deduplicate against embedded ones
+  items.forEach((oi) => {
+    const itemObj = getItemObj(oi.items);
+    const isStandaloneService = itemObj?.item_type === 'SERVICE' || itemObj?.item_name?.includes('Labour') || itemObj?.item_name?.includes('मजूरी');
+    if (isStandaloneService) {
+      const charge = Math.abs(safeNumber(oi.quantity) * safeNumber(oi.price_at_order));
+      const name = itemObj?.item_name || "Service";
+      if (!extractedServicesMap[name] || extractedServicesMap[name] < charge) {
+        extractedServicesMap[name] = charge;
+      }
+    }
+  });
+
+  totalMaterialCost = Math.round(totalMaterialCost);
+  const extractedServices = Object.entries(extractedServicesMap)
+    .map(([name, total]) => ({ name, total: Math.round(total) }))
+    .filter(s => s.total > 0);
   
   const deliveryCharge = safeNumber(order.delivery_charge);
 
@@ -163,7 +225,6 @@ export default function InvoiceView() {
   const customerPhone = order.customers?.phone_number || "";
   const customerAddress = order.customer_address || "";
 
-  // 🚀 FIXED: Always defaults to total_amount if balance is 0 to ensure the QR code always works
   const qrPaymentAmount = balanceDue > 0 ? balanceDue : safeNumber(order.total_amount);
   const upiLink = `upi://pay?pa=9867987460@okbizaxis&pn=JMM&cu=INR&am=${qrPaymentAmount.toFixed(2)}`;
 
@@ -193,7 +254,6 @@ export default function InvoiceView() {
     <> 
       <style>
         {`          
-          /* 🚀 LOAD MARATHI FONT */
           @import url('https://fonts.googleapis.com/css2?family=Yatra+One&display=swap');
 
           @media print {
@@ -217,7 +277,6 @@ export default function InvoiceView() {
 
           <div className="p-4 sm:p-8">
             <div className="text-center mb-6 flex flex-col items-center">
-              {/* 🚀 FIXED: Removed grayscale filter so logo shows in full color */}
               {tenantLogo && ( <img src={tenantLogo} alt="JMM Logo" className="h-28 w-auto object-contain mb-1 print-exact" /> )}
               <h1 className="text-3xl sm:text-5xl font-black text-black tracking-tight print-exact font-['Yatra_One'] -mt-3">{businessName}</h1>
               <h2 className="text-xl sm:text-2xl font-black text-black tracking-tight print-exact font-['Yatra_One'] mb-2">{branchName}</h2>
@@ -258,7 +317,7 @@ export default function InvoiceView() {
               </thead>
               <tbody>
                 {physicalItems.map((item, idx) => {
-                  const hasCustomIngredients = item.order_item_ingredients && item.order_item_ingredients.length > 0;
+                  const hasCustomIngredients = item.cleanSpices && item.cleanSpices.length > 0;
                   
                   let givenTag = "";
                   const handedOverQty = Number(item.handed_over_qty || 0);
@@ -273,19 +332,19 @@ export default function InvoiceView() {
                   return (
                     <React.Fragment key={idx}>
                       {hasCustomIngredients ? (
-                         item.order_item_ingredients.map((ing: any, i: number) => {
+                         item.cleanSpices.map((ing: any, i: number) => {
                            if (ing.custom_quantity <= 0) return null;
                            
-                           const rawPrice = safeNumber(ing.items?.selling_price);
-                           const normalizedQty = getNormalizedQtyForCost(ing.custom_quantity, ing.unit, ing.items?.base_unit || 'kg');
+                           const ingObj = getItemObj(ing.items);
+                           const rawPrice = safeNumber(ingObj?.selling_price);
+                           const normalizedQty = getNormalizedQtyForCost(ing.custom_quantity, ing.unit, ingObj?.base_unit || 'kg');
                            const lineCost = normalizedQty * rawPrice;
                            
                            return (
                              <tr key={`${idx}-${i}`} className="border-b border-black">
                                <td className="border-r-2 border-black px-3 py-2">
-                                 <span className="text-black font-bold">{ing.items?.item_name || "Spice"}</span>
+                                 <span className="text-black font-bold">{ingObj?.item_name || "Spice"}</span>
                                </td>
-                               {/* 🚀 FIXED: Removed the Given/Switch toggles completely */}
                                <td className="border-r-2 border-black px-3 py-2 text-center align-middle whitespace-nowrap">
                                  {formatCartWeight(ing.custom_quantity, ing.unit)}
                                  {givenTag && <div className="text-[11px] mt-1 text-zinc-600">{givenTag}</div>}
@@ -306,7 +365,6 @@ export default function InvoiceView() {
                               <td className="border-r-2 border-black px-3 py-2">
                                 <span className="text-black font-bold">{item.items?.item_name || "Unknown Item"}{sizeStr}</span>
                               </td>
-                              {/* 🚀 FIXED: Removed the Given/Switch toggles completely */}
                               <td className="border-r-2 border-black px-3 py-2 text-center align-middle whitespace-nowrap">
                                 {formatCartWeight(Math.abs(item.quantity), printUnit, item.items?.size)}
                                 {givenTag && <div className="text-[11px] mt-1 text-zinc-600">{givenTag}</div>}
@@ -332,12 +390,13 @@ export default function InvoiceView() {
                     <td className="px-3 py-2 text-right w-[40%]">{totalMaterialCost.toFixed(0)}</td>
                   </tr>
                   
-                  {totalLabourCharge > 0 && (
-                    <tr className="border-b border-black">
-                      <td className="border-r-2 border-black px-3 py-2 text-right">कुटणावळ मजुरी (Labour/Grinding)</td>
-                      <td className="px-3 py-2 text-right">{totalLabourCharge.toFixed(0)}</td>
+                  {/* 🚀 FIXED: Render each extracted service (Oil, Labour, etc.) separately */}
+                  {extractedServices.map((svc, idx) => (
+                    <tr key={`svc-${idx}`} className="border-b border-black">
+                      <td className="border-r-2 border-black px-3 py-2 text-right">{svc.name}</td>
+                      <td className="px-3 py-2 text-right">{svc.total.toFixed(0)}</td>
                     </tr>
-                  )}
+                  ))}
 
                   {deliveryCharge > 0 && (
                     <tr className="border-b border-black">
@@ -368,8 +427,6 @@ export default function InvoiceView() {
             </div>
 
             <div className="mt-10 pt-8 border-t-2 border-dashed border-zinc-400 text-center flex flex-col items-center">
-              
-              {/* 🚀 FIXED: QR Code now always displays (uses Total Amount if balance is 0) */}
               <div className="flex flex-col items-center justify-center mb-8 no-print bg-zinc-50 p-6 rounded-3xl border border-zinc-200 shadow-sm w-full sm:w-auto">
                 <a href={upiLink} className="bg-white p-3 rounded-2xl shadow-md border border-zinc-200 hover:scale-105 transition-transform cursor-pointer block">
                   <QRCode id="payment-qr-code" value={upiLink} size={150} />
